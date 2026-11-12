@@ -354,7 +354,7 @@
    1. STORAGE: everything the robot knows lives in one object,
       saved in this browser's localStorage (on the phone).
    ========================================================= */
-const APP_VERSION = "v2.6";
+const APP_VERSION = "v2.7";
 // iPhone bug: after rotating, fixed buttons can be drawn in one place but tappable in another.
 // Snapping the page back to the top re-syncs them.
 function resyncLayout() {
@@ -677,7 +677,7 @@ function localBrain(text) {
   if (/\btime\b/.test(t))
     return { say: "It's " + new Date().toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }) + "!", emotion: "neutral" };
   if (/\b(sleepy|nap|bedtime)\b/.test(t))
-    return { say: "Yaaawn. Nap? Ten out of ten idea.", emotion: "sleepy" };
+    return { say: "Yawn. Nap? Ten out of ten idea.", emotion: "sleepy" };
   if (/\b(sad|bad day|tired|upset|lonely|stressed)\b/.test(t))
     return { say: "Aw. I'm here. Always got your back.", emotion: "sad" };
   if (/\b(wow|really|no way|guess what|omg)\b/.test(t))
@@ -1090,7 +1090,7 @@ function sleepBlocked() {
 function goDrowsy() {
   sleepState = "drowsy"; drowsySince = Date.now();
   setMood("sleepy"); lookAt(0, 0);
-  const line = "Yaaawn… powering down";
+  const line = "Yawn… powering down";
   show(`<b>${esc(brain.name)}:</b> ${esc(line)}`);
   speak(line, null, { volume: 0.4, rate: 0.8, pitch: (brain.pitch ?? 1.4) * 0.85 });
 }
