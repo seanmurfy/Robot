@@ -206,9 +206,10 @@
     padding: 0 16px; font-size: 16px; user-select: text; -webkit-user-select: text;
   }
   #version {
-    position: fixed; top: 10px; left: 12px; z-index: 10;
+    position: fixed; bottom: 96px; left: 12px; z-index: 10;
     font-size: 11px; color: var(--muted); opacity: .7; pointer-events: none;
   }
+  @media (orientation: landscape) and (max-height: 500px) { #version { bottom: 70px; } }
   #gear {
     position: fixed; top: 8px; right: 10px; z-index: 10;
     width: 44px; height: 44px; border-radius: 50%;
@@ -353,7 +354,7 @@
    1. STORAGE: everything the robot knows lives in one object,
       saved in this browser's localStorage (on the phone).
    ========================================================= */
-const APP_VERSION = "v2.5";
+const APP_VERSION = "v2.6";
 // iPhone bug: after rotating, fixed buttons can be drawn in one place but tappable in another.
 // Snapping the page back to the top re-syncs them.
 function resyncLayout() {
@@ -444,8 +445,11 @@ const caption = document.getElementById("caption");
 // "asleep" is internal (sleep cycle only); the AI may use the others.
 const EMOTIONS = ["happy", "excited", "sad", "surprised", "thinking", "sleepy", "asleep", "neutral"];
 let mood = "neutral";
+let sleepState = "awake";                                 // "awake" | "drowsy" | "asleep" (see section 7)
 
 function setMood(m) {
+  // While drowsy/asleep, leftover "back to neutral" timers must not wake the face.
+  if (sleepState !== "awake" && m !== "sleepy" && m !== "asleep") return;
   if (m === "happy" || m === "excited") chirp(m === "excited");
   EMOTIONS.forEach(e => document.body.classList.remove(e));
   mood = EMOTIONS.includes(m) ? m : "neutral";
@@ -529,9 +533,13 @@ function speak(text, onDone, opts = {}) {
   const v = chooseVoice(opts.voiceName ?? brain.voiceName);
   if (v) { u.voice = v; u.lang = v.lang; }
   u.onstart = mouthOn;
-  u.onend = u.onerror = () => { mouthOff(); onDone && onDone(); };
+  u.onend = u.onerror = () => { speakingUntil = 0; mouthOff(); onDone && onDone(); };
+  // Our own "still talking" estimate: iPhone's speechSynthesis.speaking can get stuck on true.
+  speakingUntil = Date.now() + Math.min(20000, 1500 + text.length * 90 / u.rate);
   speechSynthesis.speak(u);
 }
+let speakingUntil = 0;
+const isSpeaking = () => Date.now() < speakingUntil;
 
 /* =========================================================
    4. EARS: the browser's built-in speech-to-text
@@ -1071,12 +1079,12 @@ const zzz = document.getElementById("zzz");
 const ASLEEP_AFTER_SLEEPY_MS = 3 * 60000;
 const WAKE_LINES = ["I'm up! I'm up!", "Whoa! Was I snoring?", "Back online! Let's roll!",
                     "Huh? I wasn't sleeping! Nap: nine out of ten."];
-let sleepState = "awake", lastActivity = Date.now(), drowsySince = 0, waking = false, zTimer = null;
+let lastActivity = Date.now(), drowsySince = 0, waking = false, zTimer = null;
 
 function poke() { lastActivity = Date.now(); }
 function sleepBlocked() {
   return listening || busy || capturing || camOpening || previewOpen() || waking ||
-    ("speechSynthesis" in window && speechSynthesis.speaking) || panel.classList.contains("open");
+    isSpeaking() || panel.classList.contains("open");
 }
 
 function goDrowsy() {
@@ -1137,8 +1145,19 @@ document.addEventListener("pointerdown", () => {
     swallowTimer = setTimeout(() => swallowClick = false, 800);
   }
 }, true);
+// Keep the screen on (like a real robot face) so the phone's auto-lock can't
+// freeze the page before Sprocket falls asleep. Needs iOS 16.4+ / a recent Chrome.
+let wakeLock = null;
+async function keepScreenOn() {
+  if (wakeLock || document.hidden || !("wakeLock" in navigator)) return;
+  try {
+    wakeLock = await navigator.wakeLock.request("screen");
+    wakeLock.addEventListener("release", () => { wakeLock = null; });
+  } catch {}
+}
 document.addEventListener("click", (e) => {
   unlockSpeech();
+  keepScreenOn();
   if (swallowClick) { swallowClick = false; e.stopPropagation(); e.preventDefault(); }
 }, true);
 // Typing wakes too; a message sent while asleep is answered right after the wake-up line.
@@ -1152,16 +1171,32 @@ document.addEventListener("keydown", (e) => {
     wake(() => { show(`<b>You:</b> ${esc(t)}`); think(t); });
   } else wake();
 }, true);
-document.addEventListener("visibilitychange", () => { if (!document.hidden) poke(); });
+document.addEventListener("visibilitychange", () => { if (!document.hidden) { poke(); keepScreenOn(); } });
+
+// Testing aid: the version label also shows the sleep countdown.
+const versionEl = document.getElementById("version");
+const mmss = ms => { const s = Math.max(0, Math.ceil(ms / 1000)); return Math.floor(s / 60) + ":" + String(s % 60).padStart(2, "0"); };
+function sleepStatus(blocked) {
+  const mins = brain.sleepAfter, now = Date.now();
+  let st;
+  if (sleepState === "asleep") st = "asleep";
+  else if (!mins) st = "sleep off";
+  else if (blocked) st = "awake (busy)";
+  else if (sleepState === "drowsy") st = "asleep in " + mmss(drowsySince + ASLEEP_AFTER_SLEEPY_MS - now);
+  else st = "sleepy in " + mmss(lastActivity + mins * 60000 - now);
+  versionEl.textContent = APP_VERSION + " · " + st;
+}
 
 setInterval(() => {
-  if (sleepBlocked()) { if (sleepState === "awake") poke(); return; }
+  const blocked = sleepBlocked();
+  sleepStatus(blocked);
+  if (blocked) { if (sleepState === "awake") poke(); return; }
   const mins = brain.sleepAfter;
   if (!mins) return;                                     // "Never"
   const now = Date.now();
   if (sleepState === "awake" && now - lastActivity >= mins * 60000) goDrowsy();
   else if (sleepState === "drowsy" && now - drowsySince >= ASLEEP_AFTER_SLEEPY_MS) goAsleep();
-}, 2000);
+}, 1000);
 
 if (setupLoaded) show("Setup loaded! Key, voice and settings are saved in this browser.");
 else if (!brain.apiKey) show("Sprocket here! Say hi, tell me your name, or ask me to rate something");
