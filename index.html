@@ -103,6 +103,26 @@
     font-size: 28px; flex-shrink: 0;
   }
   #mic.on { background: #ff3b30; animation: pulse 1s infinite; }
+  #look {
+    width: 52px; height: 52px; border-radius: 50%;
+    border: 2px solid var(--accent); background: var(--panel); color: var(--text);
+    font-size: 24px; flex-shrink: 0;
+  }
+  #look.on { background: var(--accent); animation: pulse 1s infinite; }
+
+  /* ---------- Vision ---------- */
+  body.focusing .eye {
+    box-shadow: 0 0 8vmin var(--accent), 0 0 16vmin rgba(42,212,255,.4);
+    animation: focus .4s ease-in-out infinite alternate;
+  }
+  @keyframes focus { from { transform: scale(1); } to { transform: scale(.7, .5); } }
+  #snap {
+    position: fixed; right: 12px; bottom: 100px; z-index: 10;
+    width: 96px; border-radius: 10px; border: 2px solid var(--accent);
+    opacity: 0; transform: scale(.8); pointer-events: none;
+    transition: opacity .25s, transform .25s;
+  }
+  #snap.show { opacity: 1; transform: scale(1); }
   @keyframes pulse { 50% { transform: scale(1.08); } }
   #typed {
     flex: 1; max-width: 420px; height: 44px; border-radius: 22px;
@@ -166,7 +186,9 @@
   <div id="bar">
     <input id="typed" type="text" placeholder="…or type here" enterkeyhint="send" autocomplete="off">
     <button id="mic" aria-label="Talk">🎤</button>
+    <button id="look" aria-label="Look">👁</button>
   </div>
+  <img id="snap" alt="What Sprocket saw">
 
   <div id="settings">
     <div class="card">
@@ -224,7 +246,7 @@
    1. STORAGE: everything the robot knows lives in one object,
       saved in this browser's localStorage (on the phone).
    ========================================================= */
-const APP_VERSION = "v2.1";   // bump on every change so you can tell which build the phone loaded
+const APP_VERSION = "v2.2";   // bump on every change so you can tell which build the phone loaded
 document.getElementById("version").textContent = APP_VERSION;
 const STORE_KEY = "robotBrain.v2";
 const CHARACTER_VERSION = 2;
@@ -288,7 +310,7 @@ function blink() {
 function lookAt(x, y) { eyes.style.transform = `translate(${x}vmin, ${y}vmin)`; }
 (function glanceLoop() {
   setTimeout(() => {
-    if (mood === "neutral") {
+    if (mood === "neutral" && !capturing) {
       Math.random() < .35 ? lookAt(0, 0)
         : lookAt((Math.random() * 2 - 1) * 8, (Math.random() * 2 - 1) * 4);
     }
@@ -421,6 +443,8 @@ ${facts}
 
 You are talking out loud through a phone speaker, so stay in character: short, punchy, excited. No emojis, no lists, no markdown.
 
+Sometimes your human shows you a photo from your camera (your eyes). React to what you actually see in it, in character. Never pretend to see something that isn't there.
+
 ALWAYS reply with ONLY a JSON object, nothing else, in exactly this shape:
 {"say": "what you say out loud", "emotion": "happy|excited|sad|surprised|thinking|neutral", "remember": ["new long-term fact", ...]}
 
@@ -520,14 +544,24 @@ function replyOffline(userText) {
   }, 500);
 }
 
+// Phrases that mean "use your camera"
+const LOOK_RE = /\b(what (do|can) you see|look at (this|that|me|my)|take a look|have a look|what am i holding|can you see (this|that|me|my))\b/i;
+
 let busy = false;
-async function think(userText) {
+async function think(userText, image) {
   if (busy) return;
+  if (!image && LOOK_RE.test(userText)) { look(userText); return; }
   if (!brain.apiKey) { replyOffline(userText); return; }   // no key = offline brain
   busy = true;
   setMood("thinking");
-  brain.history.push({ role: "user", content: userText });
+  // History only ever gets text: images are sent once and never stored.
+  brain.history.push({ role: "user", content: image ? userText + " [showed Sprocket a photo]" : userText });
   brain.history = brain.history.slice(-12);            // keep the last 12 messages
+  const messages = [{ role: "system", content: systemPrompt() }, ...brain.history];
+  if (image) messages[messages.length - 1] = { role: "user", content: [
+    { type: "text", text: userText },
+    { type: "image_url", image_url: { url: image } }
+  ] };
   try {
     const res = await fetch("https://openrouter.ai/api/v1/chat/completions", {
       method: "POST",
@@ -538,7 +572,7 @@ async function think(userText) {
       },
       body: JSON.stringify({
         model: brain.model || "openrouter/auto",
-        messages: [{ role: "system", content: systemPrompt() }, ...brain.history],
+        messages,
         max_tokens: 300,
         temperature: 0.8
       })
@@ -561,12 +595,108 @@ async function think(userText) {
   } catch (err) {
     brain.history.pop();
     setMood("sad");
-    show("Brain error: " + esc(err.message));
+    show("Brain error: " + esc(err.message) +
+         (image ? "<br>This AI model may not handle images. Try a vision model like openai/gpt-4o-mini in settings." : ""));
     speak("Oops, my brain had a hiccup.");
   } finally {
     busy = false;
   }
 }
+
+/* =========================================================
+   5b. VISION: grab one frame from the front camera
+   ========================================================= */
+const lookBtn = document.getElementById("look");
+const snapImg = document.getElementById("snap");
+let capturing = false, snapTimer = null;
+
+async function snapshot() {
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+    const e = new Error("no camera api"); e.name = "NoCameraAPI"; throw e;
+  }
+  const stream = await navigator.mediaDevices.getUserMedia({
+    video: { facingMode: "user", width: { ideal: 1280 }, height: { ideal: 720 } }, audio: false
+  });
+  try {
+    const video = document.createElement("video");
+    video.muted = true; video.playsInline = true; video.setAttribute("playsinline", "");
+    video.srcObject = stream;
+    await video.play();
+    for (let i = 0; i < 40 && !video.videoWidth; i++) await new Promise(r => setTimeout(r, 50));
+    if (!video.videoWidth) throw new Error("Camera gave no picture");
+    await new Promise(r => setTimeout(r, 400));          // let auto-exposure settle
+    const scale = Math.min(1, 512 / Math.max(video.videoWidth, video.videoHeight));
+    const c = document.createElement("canvas");
+    c.width = Math.round(video.videoWidth * scale);
+    c.height = Math.round(video.videoHeight * scale);
+    c.getContext("2d").drawImage(video, 0, 0, c.width, c.height);
+    video.srcObject = null;
+    return c.toDataURL("image/jpeg", 0.7);
+  } finally {
+    stream.getTracks().forEach(t => t.stop());           // always turn the camera off
+  }
+}
+
+function showThumb(dataUrl) {
+  clearTimeout(snapTimer);
+  snapImg.src = dataUrl;
+  snapImg.classList.add("show");
+  snapTimer = setTimeout(() => snapImg.classList.remove("show"), 3000);
+}
+
+function cameraErrorText(err) {
+  switch (err && err.name) {
+    case "NotAllowedError": case "SecurityError":
+      return "Camera blocked! Allow camera access for this site in your browser settings, then try again.";
+    case "NotFoundError": case "OverconstrainedError":
+      return "I can't find a camera on this device.";
+    case "NotReadableError": case "AbortError":
+      return "My camera is busy. Close other apps using it and try again.";
+    case "NoCameraAPI":
+      return "This browser won't let me use the camera here. It needs a secure (https) page.";
+    default:
+      return "Camera trouble: " + esc((err && err.message) || "unknown error");
+  }
+}
+
+async function look(userText) {
+  if (busy || capturing) return;
+  const text = (userText || "").trim() || "What do you see?";
+  if (!brain.apiKey) {
+    setMood("sad");
+    const line = "I need my AI brain to see! Add a key in settings.";
+    show(`<b>${esc(brain.name)}:</b> ${esc(line)}`);
+    speak(line, () => setTimeout(() => setMood("neutral"), 1200));
+    return;
+  }
+  capturing = true;
+  setMood("neutral"); lookAt(0, 0);
+  document.body.classList.add("focusing"); lookBtn.classList.add("on");
+  show("Looking…");
+  let image;
+  try {
+    image = await snapshot();
+  } catch (err) {
+    setMood("sad");
+    show(cameraErrorText(err));
+    setTimeout(() => setMood("neutral"), 2000);
+    return;
+  } finally {
+    capturing = false;
+    document.body.classList.remove("focusing"); lookBtn.classList.remove("on");
+  }
+  showThumb(image);
+  show(`<b>You:</b> ${esc(text)}`);
+  think(text, image);
+}
+
+lookBtn.addEventListener("click", () => {
+  unlockSpeech();
+  if (listening) { rec && rec.stop(); }
+  const t = typed.value.trim();                          // typed text goes along with the photo
+  typed.value = ""; typed.blur();
+  look(t);
+});
 
 /* =========================================================
    6. SETTINGS PANEL

@@ -13,6 +13,7 @@ Sprocket is a DIY companion robot. Right now it is a single-page web app (`index
 - **Voice out:** browser `speechSynthesis`; voice, pitch and rate are user-selectable in settings.
 - **Ears:** `webkitSpeechRecognition` (mic button) plus a typed-text fallback.
 - **Brain:** `think()` calls OpenRouter (`https://openrouter.ai/api/v1/chat/completions`) when an API key is set. The model must reply with JSON: `{"say", "emotion", "remember": []}`. With no key, `localBrain()` answers with offline regex rules.
+- **Vision:** eye button (or phrases matched by `LOOK_RE`, e.g. "what do you see", "look at this") calls `look()` → `snapshot()` grabs one front-camera frame, max 512px JPEG q0.7, stops the stream, and sends it to OpenRouter as an `image_url` content part. Needs an API key and a vision-capable model. Images are never stored; history gets a text note "[showed Sprocket a photo]".
 - **Memory:** everything lives in one object `brain`, saved to `localStorage` under `robotBrain.v2` (name, persona, memory facts, recent history, voice settings, API key). Backup/restore copies JSON without the key.
 
 ## Character: Sprocket
@@ -26,7 +27,7 @@ Loyal pet robot, excitable buddy (with a little cheek and wisdom). Short, punchy
 - Test locally with the Live Server extension (port 5500); test on the phone via VS Code port forwarding (public visibility).
 
 ## Roadmap
-1. Phone brain (now): face, voice, AI, memory. Next: camera snapshot + vision ("what do you see?").
+1. Phone brain (now): face, voice, AI, memory, camera snapshot + vision ("what do you see?").
 2. Balancing base: ESP32-S3, 2x 2804 gimbal motors with SimpleFOC, BNO085 IMU, LQR balance.
 3. Leg height: 2x Feetech STS3215 servos, linkage legs.
 4. Head + link: pan/tilt neck, phone cradle, phone to ESP32 over USB serial (newline-delimited JSON commands like `{"cmd":"drive","v":0.3,"turn":0}`).
