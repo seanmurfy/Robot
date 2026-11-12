@@ -128,12 +128,14 @@
   }
   .card h2 { font-size: 18px; font-weight: 600; margin-bottom: 12px; }
   .card label { display: block; font-size: 13px; color: var(--muted); margin: 12px 0 4px; }
-  .card input, .card textarea {
+  .card input, .card textarea, .card select {
     width: 100%; background: #0a1014; color: var(--text);
     border: 1px solid #22323a; border-radius: 10px; padding: 10px; font-size: 15px;
     font-family: inherit;
   }
   .card textarea { min-height: 90px; resize: vertical; }
+  .card input[type=range] { padding: 0; height: 32px; background: transparent; border: none; accent-color: var(--accent); }
+  .card select { appearance: none; -webkit-appearance: none; }
   .card small { display: block; color: var(--muted); font-size: 12px; margin-top: 4px; line-height: 1.4; }
   .row { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 16px; }
   .row button {
@@ -176,6 +178,22 @@
       <label for="sName">Robot name</label>
       <input id="sName" type="text">
 
+      <label for="sVoice">Voice</label>
+      <select id="sVoice"></select>
+      <small id="voiceCount">Loading voices…</small>
+
+      <label for="sPitch">Pitch: <span id="pitchVal"></span></label>
+      <input id="sPitch" type="range" min="0.5" max="2" step="0.05">
+      <small>Higher = smaller and cuter. Lower = bigger and deeper.</small>
+
+      <label for="sRate">Speed: <span id="rateVal"></span></label>
+      <input id="sRate" type="range" min="0.6" max="1.6" step="0.05">
+
+      <div class="row" style="margin-top:10px">
+        <button id="btnPreview">▶ Preview voice</button>
+        <button id="btnRandomVoice">🎲 Surprise me</button>
+      </div>
+
       <label for="sPersona">Personality</label>
       <textarea id="sPersona"></textarea>
 
@@ -216,6 +234,9 @@ const DEFAULTS = {
            "just a face on a phone, but wheels and legs are coming and you can't wait.",
   memory: [],
   history: [],
+  voiceName: "",     // "" = automatic pick
+  pitch: 1.4,
+  rate: 1.1,
   character: CHARACTER_VERSION
 };
 function load() {
@@ -309,13 +330,21 @@ function unlockSpeech() {
   speechSynthesis.speak(u);
   speechUnlocked = true;
 }
-function speak(text, onDone) {
+function chooseVoice(name) {
+  const all = speechSynthesis.getVoices();
+  return all.find(v => v.name === name)
+      || all.find(v => /en(-|_)US/i.test(v.lang))
+      || all[0];
+}
+function speak(text, onDone, opts = {}) {
   if (!("speechSynthesis" in window)) { onDone && onDone(); return; }
   if (speechSynthesis.speaking || speechSynthesis.pending) speechSynthesis.cancel();
   const u = new SpeechSynthesisUtterance(text);
-  u.rate = 1.05; u.pitch = 1.4; u.volume = 1;
-  const v = speechSynthesis.getVoices().find(v => /en(-|_)US/i.test(v.lang));
-  if (v) u.voice = v;
+  u.rate  = opts.rate  ?? brain.rate  ?? 1.1;
+  u.pitch = opts.pitch ?? brain.pitch ?? 1.4;
+  u.volume = 1;
+  const v = chooseVoice(opts.voiceName ?? brain.voiceName);
+  if (v) { u.voice = v; u.lang = v.lang; }
   u.onstart = mouthOn;
   u.onend = u.onerror = () => { mouthOff(); onDone && onDone(); };
   speechSynthesis.speak(u);
@@ -543,9 +572,50 @@ function openSettings() {
   $("sName").value = brain.name;
   $("sPersona").value = brain.persona;
   $("sMemory").value = brain.memory.join("\n");
+  $("sPitch").value = brain.pitch ?? 1.4;
+  $("sRate").value = brain.rate ?? 1.1;
+  sliderLabels();
+  fillVoices();
   $("settingsMsg").textContent = "";
   panel.classList.add("open");
 }
+function fillVoices() {
+  const sel = $("sVoice");
+  if (!("speechSynthesis" in window)) { $("voiceCount").textContent = "This browser has no built-in voices."; return; }
+  const all = speechSynthesis.getVoices();
+  if (!all.length) return;
+  const en = all.filter(v => /^en/i.test(v.lang)).sort((a, b) => a.name.localeCompare(b.name));
+  const other = all.filter(v => !/^en/i.test(v.lang)).sort((a, b) => a.lang.localeCompare(b.lang) || a.name.localeCompare(b.name));
+  const opt = v => `<option value="${esc(v.name)}">${esc(v.name)} (${esc(v.lang)})</option>`;
+  sel.innerHTML = `<option value="">Automatic</option>` +
+    (en.length ? `<optgroup label="English">${en.map(opt).join("")}</optgroup>` : "") +
+    (other.length ? `<optgroup label="Other languages">${other.map(opt).join("")}</optgroup>` : "");
+  sel.value = brain.voiceName || "";
+  if (sel.value !== (brain.voiceName || "")) sel.value = "";
+  $("voiceCount").textContent = `${all.length} voices on this device (${en.length} English). Try the novelty ones!`;
+}
+if ("speechSynthesis" in window) speechSynthesis.addEventListener("voiceschanged", fillVoices);
+function sliderLabels() {
+  $("pitchVal").textContent = Number($("sPitch").value).toFixed(2);
+  $("rateVal").textContent = Number($("sRate").value).toFixed(2) + "×";
+}
+$("sPitch").addEventListener("input", sliderLabels);
+$("sRate").addEventListener("input", sliderLabels);
+const PREVIEW_LINES = ["Sprocket here! Let's roll!", "Your shoes? Nine out of ten!", "You're back! Best day ever!"];
+$("btnPreview").addEventListener("click", () => {
+  unlockSpeech();
+  speak(pick(PREVIEW_LINES), null, {
+    voiceName: $("sVoice").value, pitch: Number($("sPitch").value), rate: Number($("sRate").value)
+  });
+});
+$("btnRandomVoice").addEventListener("click", () => {
+  unlockSpeech();
+  const en = speechSynthesis.getVoices().filter(v => /^en/i.test(v.lang));
+  if (!en.length) return;
+  const v = pick(en);
+  $("sVoice").value = v.name;
+  speak(`Hi! I'm ${v.name}. Pick me?`, null, { voiceName: v.name, pitch: Number($("sPitch").value), rate: Number($("sRate").value) });
+});
 $("gear").addEventListener("click", openSettings);
 $("btnClose").addEventListener("click", () => panel.classList.remove("open"));
 $("btnSave").addEventListener("click", () => {
@@ -554,6 +624,9 @@ $("btnSave").addEventListener("click", () => {
   brain.name = $("sName").value.trim() || "Bolt";
   brain.persona = $("sPersona").value.trim() || DEFAULTS.persona;
   brain.memory = $("sMemory").value.split("\n").map(s => s.trim()).filter(Boolean);
+  brain.voiceName = $("sVoice").value;
+  brain.pitch = Number($("sPitch").value);
+  brain.rate = Number($("sRate").value);
   save();
   panel.classList.remove("open");
   setMood("happy"); show("Settings saved!");
@@ -579,7 +652,6 @@ $("btnReset").addEventListener("click", () => {
 });
 
 if (!brain.apiKey) show("Sprocket here! Say hi, tell me your name, or ask me to rate something");
-if ("speechSynthesis" in window) speechSynthesis.onvoiceschanged = () => {};
 </script>
 </body>
 </html>
