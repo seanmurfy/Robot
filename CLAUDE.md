@@ -8,12 +8,14 @@ Sprocket is a DIY companion robot. Right now it is a single-page web app (`index
 - Tested on iPhone in Chrome (Safari speech recognition was blocked by iOS settings).
 
 ## What index.html does
-- **Face:** animated orange eyes that blink and glance; emotions `happy`, `excited`, `sad`, `surprised`, `thinking`, `neutral` set via `setMood()` as CSS classes on `<body>`.
+- **Face:** animated orange eyes that blink and glance; emotions `happy`, `excited`, `sad`, `surprised`, `thinking`, `sleepy`, `neutral` (plus internal `asleep`) set via `setMood()` as CSS classes on `<body>`.
 - **Sound:** `chirp()` plays a Web Audio "bweep" on happy/excited (signature sound).
 - **Voice out:** browser `speechSynthesis`; voice, pitch and rate are user-selectable in settings.
 - **Ears:** `webkitSpeechRecognition` (mic button) plus a typed-text fallback.
 - **Brain:** `think()` calls OpenRouter (`https://openrouter.ai/api/v1/chat/completions`) when an API key is set. The model must reply with JSON: `{"say", "emotion", "remember": []}`. With no key, `localBrain()` answers with offline regex rules.
 - **Vision:** 👁 button opens a live camera preview (`openPreview()`); a `LOOK_RE` phrase ("what do you see", "look at this") opens it too and snaps right away. While open, anything said or typed goes to `think()` with the current frame (`grabFrame()`: max 512px, JPEG q0.7, sent as an `image_url` part); 📸 Snap sends "What do you see?". The eyes look down at the preview. Camera choice is `brain.camera` ("user"/"environment"), set in settings or with the 🔄 button, falling back to any camera if the chosen one is missing. ✕, 60 s of no activity, or hiding the page closes the preview and stops all tracks. Needs an API key and a vision-capable model. Images are never stored; history gets a text note "[showed Sprocket a photo]".
+- **Sleep cycle:** after `brain.sleepAfter` idle minutes (setting: Never/2/5/10, default 2) Sprocket yawns and goes `sleepy`; 3 minutes later `asleep` (breathing line eyes, floating z's in a `pointer-events: none` layer). Never sleeps while listening, thinking, speaking, settings open, or camera preview open. Any tap/key wakes it (`wake()`): surprised → excited chirp + a wake line. The waking tap is swallowed so it doesn't also press a button; a typed message sent while asleep is answered after the wake line.
+- **Setup link:** settings → "Copy setup link" puts key, model, voice, pitch, rate, camera and sleep setting in a `#setup=` URL hash (never sent to a server). Opening it on any origin (GitHub Pages, Live Server, a tunnel, a new phone) imports them and strips the hash. Each origin has separate localStorage, which is why settings seemed to "reset".
 - **Memory:** everything lives in one object `brain`, saved to `localStorage` under `robotBrain.v2` (name, persona, memory facts, recent history, voice settings, API key). Backup/restore copies JSON without the key.
 
 ## Character: Sprocket

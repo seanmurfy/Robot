@@ -71,6 +71,44 @@
   body.excited #mouth { background: #ffc247; width: 14vmin; }
   body.thinking .eye { height: 14vmin; }
   body.thinking #eyes { transform: translate(-6vmin, -6vmin) !important; }
+  /* Sleepy: half-closed, droopy lids (outer corners lower), dimmer glow, slow heavy blinks */
+  body.sleepy .eye, body.asleep .eye {
+    transition: height .5s ease-in-out, width .5s, border-radius .5s, background .6s, transform .6s, box-shadow .6s;
+  }
+  body.sleepy .eye {
+    height: 15vmin; border-radius: 3vmin 3vmin 10vmin 10vmin; overflow: hidden;
+    background: #e07a28; transform: translateY(5vmin);
+    box-shadow: 0 0 4vmin rgba(255,138,42,.3), 0 0 9vmin rgba(255,138,42,.18);
+  }
+  body.sleepy .eye::after {
+    content: ""; position: absolute; left: -25%; right: -25%; top: -6.5vmin; height: 10vmin;
+    background: var(--bg);
+  }
+  body.sleepy #eyeL::after { transform: rotate(13deg); }
+  body.sleepy #eyeR::after { transform: rotate(-13deg); }
+  body.sleepy .eye.blink { height: 1.5vmin !important; }
+  body.sleepy #mouth { width: 6vmin; opacity: .5; }
+  /* Asleep: thin lines that breathe */
+  body.asleep .eye {
+    height: 1.6vmin; border-radius: 1vmin; background: #c86a22; transform: translateY(8vmin);
+    animation: breathe 4s ease-in-out infinite;
+  }
+  @keyframes breathe {
+    0%, 100% { opacity: .35; box-shadow: 0 0 2vmin rgba(255,138,42,.2); }
+    50%      { opacity: .95; box-shadow: 0 0 6vmin rgba(255,138,42,.5); }
+  }
+  body.asleep #mouth { opacity: .2; }
+  #zzz { position: fixed; inset: 0; z-index: 5; pointer-events: none; overflow: hidden; }
+  #zzz span {
+    position: absolute; color: var(--eye); font-weight: 700; opacity: 0;
+    animation: zfloat 4s ease-out forwards; pointer-events: none;
+  }
+  @keyframes zfloat {
+    0%   { opacity: 0; transform: translate(0, 0) rotate(-10deg); }
+    20%  { opacity: .8; }
+    100% { opacity: 0; transform: translate(6vmin, -20vmin) rotate(12deg); }
+  }
+
   body.listening .eye { box-shadow: 0 0 8vmin var(--accent), 0 0 16vmin rgba(42,212,255,.4); }
 
   #mouth {
@@ -223,6 +261,7 @@
     </div>
   </div>
   <div id="mouth"></div>
+  <div id="zzz"></div>
 
   <div id="bar">
     <input id="typed" type="text" placeholder="…or type here" enterkeyhint="send" autocomplete="off">
@@ -254,6 +293,15 @@
         <option value="environment">Back</option>
       </select>
       <small>Which camera Sprocket looks through. The 🔄 button switches it too.</small>
+
+      <label for="sSleep">Sleep after</label>
+      <select id="sSleep">
+        <option value="0">Never</option>
+        <option value="2">2 min</option>
+        <option value="5">5 min</option>
+        <option value="10">10 min</option>
+      </select>
+      <small>With nothing going on, Sprocket gets sleepy after this long and falls fully asleep 3 minutes later. Any tap wakes it.</small>
 
       <label for="sName">Robot name</label>
       <input id="sName" type="text">
@@ -290,6 +338,12 @@
         <button id="btnImport">Paste backup</button>
         <button class="danger" id="btnReset">Forget chat</button>
       </div>
+      <div class="row">
+        <button id="btnSetupLink">🔗 Copy setup link</button>
+      </div>
+      <small>Makes a private link holding your API key, model, voice and settings. Open it in any browser
+        (GitHub Pages, Live Server, a new phone) and Sprocket is set up instantly. Bookmark it, but
+        <b>never share or post it</b>: anyone with the link can use your key.</small>
       <small id="settingsMsg"></small>
     </div>
   </div>
@@ -299,7 +353,7 @@
    1. STORAGE: everything the robot knows lives in one object,
       saved in this browser's localStorage (on the phone).
    ========================================================= */
-const APP_VERSION = "v2.4";
+const APP_VERSION = "v2.5";
 // iPhone bug: after rotating, fixed buttons can be drawn in one place but tappable in another.
 // Snapping the page back to the top re-syncs them.
 function resyncLayout() {
@@ -331,6 +385,7 @@ const DEFAULTS = {
   pitch: 1.4,
   rate: 1.1,
   camera: "user",    // "user" = front, "environment" = back
+  sleepAfter: 2,     // minutes idle before getting sleepy; 0 = never
   character: CHARACTER_VERSION
 };
 function load() {
@@ -341,6 +396,38 @@ function save() {
   try { localStorage.setItem(STORE_KEY, JSON.stringify(brain)); } catch {}
 }
 let brain = load();
+
+// Setup link: settings (incl. API key) travel in the URL #hash, which never reaches any server.
+// Each address (GitHub Pages, Live Server, a VS Code tunnel) has its own separate storage,
+// so this is how a key and voice carry over without retyping.
+const SETUP_KEYS = ["apiKey", "model", "voiceName", "pitch", "rate", "camera", "sleepAfter"];
+function makeSetupLink() {
+  const data = {};
+  SETUP_KEYS.forEach(k => data[k] = brain[k]);
+  const b64 = btoa(unescape(encodeURIComponent(JSON.stringify(data))));
+  return location.origin + location.pathname + "#setup=" + b64;
+}
+let setupLoaded = false;
+(function readSetupLink() {
+  const m = location.hash.match(/^#setup=([A-Za-z0-9+/=]+)$/);
+  if (!m) return;
+  try {
+    const data = JSON.parse(decodeURIComponent(escape(atob(m[1]))));
+    const str = v => typeof v === "string";
+    if (str(data.apiKey)) brain.apiKey = data.apiKey.trim();
+    if (str(data.model) && data.model.trim()) brain.model = data.model.trim();
+    if (str(data.voiceName)) brain.voiceName = data.voiceName;
+    if (Number.isFinite(data.pitch)) brain.pitch = Math.min(2, Math.max(0.5, data.pitch));
+    if (Number.isFinite(data.rate)) brain.rate = Math.min(1.6, Math.max(0.6, data.rate));
+    if (data.camera === "user" || data.camera === "environment") brain.camera = data.camera;
+    if ([0, 2, 5, 10].includes(data.sleepAfter)) brain.sleepAfter = data.sleepAfter;
+    save();
+    setupLoaded = true;
+  } catch {}
+  history.replaceState(null, "", location.pathname + location.search);   // wipe the key from the address bar
+})();
+// Ask the browser not to clear our storage (helps on iPhone).
+try { navigator.storage && navigator.storage.persist && navigator.storage.persist(); } catch {}
 // Upgrade an older saved robot to the new character, keeping its memories.
 if (brain.character !== CHARACTER_VERSION) {
   brain.name = DEFAULTS.name; brain.persona = DEFAULTS.persona;
@@ -354,7 +441,8 @@ const eyes = document.getElementById("eyes");
 const eyeEls = [document.getElementById("eyeL"), document.getElementById("eyeR")];
 const mouth = document.getElementById("mouth");
 const caption = document.getElementById("caption");
-const EMOTIONS = ["happy", "excited", "sad", "surprised", "thinking", "neutral"];
+// "asleep" is internal (sleep cycle only); the AI may use the others.
+const EMOTIONS = ["happy", "excited", "sad", "surprised", "thinking", "sleepy", "asleep", "neutral"];
 let mood = "neutral";
 
 function setMood(m) {
@@ -364,12 +452,13 @@ function setMood(m) {
   if (mood !== "neutral") document.body.classList.add(mood);
 }
 function blink() {
-  if (mood === "happy" || mood === "excited") return;
+  if (mood === "happy" || mood === "excited" || mood === "asleep") return;
+  const hold = mood === "sleepy" ? 750 : 110;            // sleepy = slow, heavy blink
   eyeEls.forEach(e => e.classList.add("blink"));
-  setTimeout(() => eyeEls.forEach(e => e.classList.remove("blink")), 110);
+  setTimeout(() => eyeEls.forEach(e => e.classList.remove("blink")), hold);
 }
 (function blinkLoop() {
-  setTimeout(() => { blink(); if (Math.random() < .2) setTimeout(blink, 250); blinkLoop(); },
+  setTimeout(() => { blink(); if (mood !== "sleepy" && Math.random() < .2) setTimeout(blink, 250); blinkLoop(); },
              2000 + Math.random() * 3500);
 })();
 function lookAt(x, y) { eyes.style.transform = `translate(${x}vmin, ${y}vmin)`; }
@@ -436,7 +525,7 @@ function speak(text, onDone, opts = {}) {
   const u = new SpeechSynthesisUtterance(text);
   u.rate  = opts.rate  ?? brain.rate  ?? 1.1;
   u.pitch = opts.pitch ?? brain.pitch ?? 1.4;
-  u.volume = 1;
+  u.volume = opts.volume ?? 1;
   const v = chooseVoice(opts.voiceName ?? brain.voiceName);
   if (v) { u.voice = v; u.lang = v.lang; }
   u.onstart = mouthOn;
@@ -511,7 +600,7 @@ You are talking out loud through a phone speaker, so stay in character: short, p
 Sometimes your human shows you a photo from your camera (your eyes). React to what you actually see in it, in character. Never pretend to see something that isn't there.
 
 ALWAYS reply with ONLY a JSON object, nothing else, in exactly this shape:
-{"say": "what you say out loud", "emotion": "happy|excited|sad|surprised|thinking|neutral", "remember": ["new long-term fact", ...]}
+{"say": "what you say out loud", "emotion": "happy|excited|sad|surprised|thinking|sleepy|neutral", "remember": ["new long-term fact", ...]}
 
 Use "remember" only for genuinely new, lasting facts worth keeping (names, likes, plans, important events). Usually it is an empty list.`;
 }
@@ -579,6 +668,8 @@ function localBrain(text) {
     return { say: `Can't see outside yet. I'll guess ${rate()} out of 10!`, emotion: "thinking" };
   if (/\btime\b/.test(t))
     return { say: "It's " + new Date().toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }) + "!", emotion: "neutral" };
+  if (/\b(sleepy|nap|bedtime)\b/.test(t))
+    return { say: "Yaaawn. Nap? Ten out of ten idea.", emotion: "sleepy" };
   if (/\b(sad|bad day|tired|upset|lonely|stressed)\b/.test(t))
     return { say: "Aw. I'm here. Always got your back.", emotion: "sad" };
   if (/\b(wow|really|no way|guess what|omg)\b/.test(t))
@@ -853,31 +944,46 @@ function openSettings() {
   $("sModel").value = brain.model;
   $("sName").value = brain.name;
   $("sCamera").value = brain.camera === "environment" ? "environment" : "user";
+  $("sSleep").value = String([0, 2, 5, 10].includes(brain.sleepAfter) ? brain.sleepAfter : 2);
   $("sPersona").value = brain.persona;
   $("sMemory").value = brain.memory.join("\n");
   $("sPitch").value = brain.pitch ?? 1.4;
   $("sRate").value = brain.rate ?? 1.1;
   sliderLabels();
-  fillVoices();
+  fillVoices(brain.voiceName || "");
   $("settingsMsg").textContent = "";
   panel.classList.add("open");
 }
-function fillVoices() {
+// `want` = which voice to select. When the list refreshes while settings are open
+// (voices load late on iPhone), keep whatever is currently picked.
+function fillVoices(want) {
   const sel = $("sVoice");
+  if (want === undefined || typeof want !== "string") want = sel.options.length ? sel.value : (brain.voiceName || "");
   if (!("speechSynthesis" in window)) { $("voiceCount").textContent = "This browser has no built-in voices."; return; }
   const all = speechSynthesis.getVoices();
-  if (!all.length) return;
+  if (!all.length) {
+    // Voices not loaded yet: still show the saved voice so Save can't wipe it.
+    sel.innerHTML = `<option value="">Automatic</option>` +
+      (want ? `<option value="${esc(want)}">${esc(want)}</option>` : "");
+    sel.value = want;
+    $("voiceCount").textContent = "Loading voices…";
+    return;
+  }
   const en = all.filter(v => /^en/i.test(v.lang)).sort((a, b) => a.name.localeCompare(b.name));
   const other = all.filter(v => !/^en/i.test(v.lang)).sort((a, b) => a.lang.localeCompare(b.lang) || a.name.localeCompare(b.name));
   const opt = v => `<option value="${esc(v.name)}">${esc(v.name)} (${esc(v.lang)})</option>`;
   sel.innerHTML = `<option value="">Automatic</option>` +
     (en.length ? `<optgroup label="English">${en.map(opt).join("")}</optgroup>` : "") +
     (other.length ? `<optgroup label="Other languages">${other.map(opt).join("")}</optgroup>` : "");
-  sel.value = brain.voiceName || "";
-  if (sel.value !== (brain.voiceName || "")) sel.value = "";
+  sel.value = want;
+  if (sel.value !== want) {
+    // Saved voice isn't on this device: keep it listed rather than silently dropping it.
+    if (want) sel.insertAdjacentHTML("beforeend", `<option value="${esc(want)}">${esc(want)} (not on this device)</option>`);
+    sel.value = want;
+  }
   $("voiceCount").textContent = `${all.length} voices on this device (${en.length} English). Try the novelty ones!`;
 }
-if ("speechSynthesis" in window) speechSynthesis.addEventListener("voiceschanged", fillVoices);
+if ("speechSynthesis" in window) speechSynthesis.addEventListener("voiceschanged", () => fillVoices());
 function sliderLabels() {
   $("pitchVal").textContent = Number($("sPitch").value).toFixed(2);
   $("rateVal").textContent = Number($("sRate").value).toFixed(2) + "×";
@@ -913,6 +1019,7 @@ $("btnSave").addEventListener("click", () => {
   brain.rate = Number($("sRate").value);
   const camChanged = brain.camera !== $("sCamera").value;
   brain.camera = $("sCamera").value;
+  brain.sleepAfter = Number($("sSleep").value);
   save();
   if (camChanged && previewOpen())
     startCamera().catch(err => { closePreview(); show(cameraErrorText(err)); });
@@ -940,16 +1047,124 @@ $("btnImport").addEventListener("click", async () => {
     if (typeof brain.name !== "string" || !brain.name.trim()) brain.name = DEFAULTS.name;
     if (typeof brain.persona !== "string" || !brain.persona.trim()) brain.persona = DEFAULTS.persona;
     if (brain.camera !== "environment") brain.camera = "user";
+    if (![0, 2, 5, 10].includes(brain.sleepAfter)) brain.sleepAfter = 2;
     save(); openSettings();
     $("settingsMsg").textContent = "Backup restored.";
   } catch { $("settingsMsg").textContent = "Copy a backup first, then tap Paste backup."; }
+});
+$("btnSetupLink").addEventListener("click", async () => {
+  if (!brain.apiKey) { $("settingsMsg").textContent = "Enter and save your API key first."; return; }
+  const link = makeSetupLink();
+  try { await navigator.clipboard.writeText(link); $("settingsMsg").textContent = "Setup link copied. Keep it private (Notes or a bookmark)."; }
+  catch { prompt("Copy this private setup link:", link); }
 });
 $("btnReset").addEventListener("click", () => {
   brain.history = []; save();
   $("settingsMsg").textContent = "Chat history cleared. Long-term memory kept.";
 });
 
-if (!brain.apiKey) show("Sprocket here! Say hi, tell me your name, or ask me to rate something");
+/* =========================================================
+   7. SLEEP CYCLE: sleepy after brain.sleepAfter idle minutes,
+      fully asleep 3 minutes later; any tap or key wakes it.
+   ========================================================= */
+const zzz = document.getElementById("zzz");
+const ASLEEP_AFTER_SLEEPY_MS = 3 * 60000;
+const WAKE_LINES = ["I'm up! I'm up!", "Whoa! Was I snoring?", "Back online! Let's roll!",
+                    "Huh? I wasn't sleeping! Nap: nine out of ten."];
+let sleepState = "awake", lastActivity = Date.now(), drowsySince = 0, waking = false, zTimer = null;
+
+function poke() { lastActivity = Date.now(); }
+function sleepBlocked() {
+  return listening || busy || capturing || camOpening || previewOpen() || waking ||
+    ("speechSynthesis" in window && speechSynthesis.speaking) || panel.classList.contains("open");
+}
+
+function goDrowsy() {
+  sleepState = "drowsy"; drowsySince = Date.now();
+  setMood("sleepy"); lookAt(0, 0);
+  const line = "Yaaawn… powering down";
+  show(`<b>${esc(brain.name)}:</b> ${esc(line)}`);
+  speak(line, null, { volume: 0.4, rate: 0.8, pitch: (brain.pitch ?? 1.4) * 0.85 });
+}
+function spawnZ() {
+  if (zzz.childElementCount >= 4) return;                // just a few at a time
+  const r = eyes.getBoundingClientRect();
+  const z = document.createElement("span");
+  z.textContent = Math.random() < .5 ? "z" : "Z";
+  z.style.left = (r.right - r.width * 0.15 + Math.random() * 30) + "px";
+  z.style.top = (r.top - 20 - Math.random() * 20) + "px";
+  z.style.fontSize = (3 + Math.random() * 3) + "vmin";
+  z.addEventListener("animationend", () => z.remove());
+  zzz.appendChild(z);
+}
+function goAsleep() {
+  sleepState = "asleep";
+  setMood("asleep"); lookAt(0, 0); show("");
+  spawnZ();
+  zTimer = setInterval(spawnZ, 1500);
+}
+function stopZs() { clearInterval(zTimer); zTimer = null; zzz.innerHTML = ""; }
+
+// Returns true if Sprocket was sleeping (so the triggering tap should only wake it).
+function wake(after) {
+  if (sleepState === "awake") return false;
+  sleepState = "awake"; waking = true; stopZs(); poke();
+  if ("speechSynthesis" in window) speechSynthesis.cancel(); // cut off a yawn in progress
+  setMood("surprised"); lookAt(0, 0);                    // eyes pop wide
+  let done = false;
+  const finish = () => {
+    if (done) return; done = true;
+    waking = false; poke();
+    setTimeout(() => { if (mood === "excited") setMood("neutral"); }, 800);
+    after && after();
+  };
+  setTimeout(() => {
+    setMood("excited");                                  // plays the excited chirp
+    const line = pick(WAKE_LINES);
+    show(`<b>${esc(brain.name)}:</b> ${esc(line)}`);
+    speak(line, finish);
+    setTimeout(finish, 6000);                            // safety net if speech never reports back
+  }, 500);
+  return true;
+}
+
+// Any tap wakes. A tap that wakes is swallowed so it doesn't also press a button.
+let swallowClick = false, swallowTimer = null;
+document.addEventListener("pointerdown", () => {
+  poke();
+  if (wake()) {
+    swallowClick = true; clearTimeout(swallowTimer);
+    swallowTimer = setTimeout(() => swallowClick = false, 800);
+  }
+}, true);
+document.addEventListener("click", (e) => {
+  unlockSpeech();
+  if (swallowClick) { swallowClick = false; e.stopPropagation(); e.preventDefault(); }
+}, true);
+// Typing wakes too; a message sent while asleep is answered right after the wake-up line.
+document.addEventListener("keydown", (e) => {
+  poke();
+  if (sleepState === "awake") return;
+  if (e.target === typed && e.key === "Enter" && typed.value.trim()) {
+    const t = typed.value.trim();
+    typed.value = ""; typed.blur();
+    e.stopPropagation(); e.preventDefault();
+    wake(() => { show(`<b>You:</b> ${esc(t)}`); think(t); });
+  } else wake();
+}, true);
+document.addEventListener("visibilitychange", () => { if (!document.hidden) poke(); });
+
+setInterval(() => {
+  if (sleepBlocked()) { if (sleepState === "awake") poke(); return; }
+  const mins = brain.sleepAfter;
+  if (!mins) return;                                     // "Never"
+  const now = Date.now();
+  if (sleepState === "awake" && now - lastActivity >= mins * 60000) goDrowsy();
+  else if (sleepState === "drowsy" && now - drowsySince >= ASLEEP_AFTER_SLEEPY_MS) goAsleep();
+}, 2000);
+
+if (setupLoaded) show("Setup loaded! Key, voice and settings are saved in this browser.");
+else if (!brain.apiKey) show("Sprocket here! Say hi, tell me your name, or ask me to rate something");
 </script>
 </body>
 </html>
