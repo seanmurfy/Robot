@@ -94,7 +94,7 @@
   /* ---------- Bottom bar ---------- */
   #bar {
     position: fixed; left: 0; right: 0; bottom: 0; height: 90px;
-    display: flex; align-items: center; justify-content: center; gap: 14px;
+    display: flex; align-items: center; justify-content: center; gap: 10px; z-index: 10;
     padding: 0 16px calc(env(safe-area-inset-bottom) / 2);
   }
   #mic {
@@ -108,21 +108,45 @@
     border: 2px solid var(--accent); background: var(--panel); color: var(--text);
     font-size: 24px; flex-shrink: 0;
   }
-  #look.on { background: var(--accent); animation: pulse 1s infinite; }
+  #look.on { background: var(--accent); color: #05222b; }
+  #flip {
+    width: 40px; height: 40px; border-radius: 50%;
+    border: 1px solid #22323a; background: var(--panel); color: var(--text);
+    font-size: 18px; flex-shrink: 0;
+  }
 
   /* ---------- Vision ---------- */
   body.focusing .eye {
     box-shadow: 0 0 8vmin var(--accent), 0 0 16vmin rgba(42,212,255,.4);
-    animation: focus .4s ease-in-out infinite alternate;
+    animation: focus .3s ease-in-out 2 alternate;
   }
   @keyframes focus { from { transform: scale(1); } to { transform: scale(.7, .5); } }
-  #snap {
-    position: fixed; right: 12px; bottom: 100px; z-index: 10;
-    width: 96px; border-radius: 10px; border: 2px solid var(--accent);
-    opacity: 0; transform: scale(.8); pointer-events: none;
-    transition: opacity .25s, transform .25s;
+  #preview {
+    position: fixed; left: 50%; bottom: 100px; z-index: 20;
+    width: 40vw; min-width: 160px; max-width: 360px; min-height: 100px;
+    transform: translateX(-50%);
+    border-radius: 18px; overflow: hidden; border: 2px solid var(--accent);
+    background: #000; box-shadow: 0 0 6vmin rgba(42,212,255,.25);
+    display: none;
   }
-  #snap.show { opacity: 1; transform: scale(1); }
+  #preview.open { display: block; }
+  #pv { display: block; width: 100%; max-height: 38vh; object-fit: cover; }
+  #pv.mirror { transform: scaleX(-1); }
+  #preview.flash::after {
+    content: ""; position: absolute; inset: 0; background: #fff; opacity: .6; pointer-events: none;
+  }
+  #preview button {
+    position: absolute; z-index: 21; border: none; border-radius: 999px;
+    background: rgba(5,9,12,.7); color: #fff;
+  }
+  #pvClose { top: 6px; right: 6px; width: 36px; height: 36px; font-size: 18px; }
+  #pvSnap {
+    bottom: 8px; left: 50%; transform: translateX(-50%);
+    padding: 8px 14px; font-size: 15px; white-space: nowrap;
+  }
+  /* While the preview is open, the face moves up so the eyes stay visible above it. */
+  body.previewing #face { bottom: calc(100px + 38vh); }
+  body.previewing #mouth { bottom: calc(108px + 38vh); }
   @keyframes pulse { 50% { transform: scale(1.08); } }
   #typed {
     flex: 1; max-width: 420px; height: 44px; border-radius: 22px;
@@ -187,8 +211,13 @@
     <input id="typed" type="text" placeholder="…or type here" enterkeyhint="send" autocomplete="off">
     <button id="mic" aria-label="Talk">🎤</button>
     <button id="look" aria-label="Look">👁</button>
+    <button id="flip" aria-label="Switch camera">🔄</button>
   </div>
-  <img id="snap" alt="What Sprocket saw">
+  <div id="preview">
+    <video id="pv" playsinline muted autoplay></video>
+    <button id="pvClose" aria-label="Close camera">✕</button>
+    <button id="pvSnap">📸 Snap</button>
+  </div>
 
   <div id="settings">
     <div class="card">
@@ -201,6 +230,13 @@
       <label for="sModel">AI model</label>
       <input id="sModel" type="text" placeholder="openrouter/auto">
       <small>Any model name from openrouter.ai/models. "openrouter/auto" picks one for you.</small>
+
+      <label for="sCamera">Camera</label>
+      <select id="sCamera">
+        <option value="user">Front</option>
+        <option value="environment">Back</option>
+      </select>
+      <small>Which camera Sprocket looks through. The 🔄 button switches it too.</small>
 
       <label for="sName">Robot name</label>
       <input id="sName" type="text">
@@ -246,7 +282,7 @@
    1. STORAGE: everything the robot knows lives in one object,
       saved in this browser's localStorage (on the phone).
    ========================================================= */
-const APP_VERSION = "v2.2";   // bump on every change so you can tell which build the phone loaded
+const APP_VERSION = "v2.3";   // bump on every change so you can tell which build the phone loaded
 document.getElementById("version").textContent = APP_VERSION;
 const STORE_KEY = "robotBrain.v2";
 const CHARACTER_VERSION = 2;
@@ -266,6 +302,7 @@ const DEFAULTS = {
   voiceName: "",     // "" = automatic pick
   pitch: 1.4,
   rate: 1.1,
+  camera: "user",    // "user" = front, "environment" = back
   character: CHARACTER_VERSION
 };
 function load() {
@@ -310,7 +347,7 @@ function blink() {
 function lookAt(x, y) { eyes.style.transform = `translate(${x}vmin, ${y}vmin)`; }
 (function glanceLoop() {
   setTimeout(() => {
-    if (mood === "neutral" && !capturing) {
+    if (mood === "neutral" && !document.body.classList.contains("previewing")) {
       Math.random() < .35 ? lookAt(0, 0)
         : lookAt((Math.random() * 2 - 1) * 8, (Math.random() * 2 - 1) * 4);
     }
@@ -549,8 +586,27 @@ const LOOK_RE = /\b(what (do|can) you see|look at (this|that|me|my)|take a look|
 
 let busy = false;
 async function think(userText, image) {
-  if (busy) return;
-  if (!image && LOOK_RE.test(userText)) { look(userText); return; }
+  if (busy || capturing) return;
+  // With the preview open, everything said or typed goes with the current frame.
+  // A "look" phrase with the preview closed opens it first.
+  if (!image && (previewOpen() || LOOK_RE.test(userText))) {
+    if (!brain.apiKey) { noBrainForEyes(); return; }
+    capturing = true;
+    try {
+      if (!previewOpen()) {
+        if (!(await openPreview())) return;
+        await sleep(500);                               // let auto-exposure settle
+      }
+      bumpIdle();
+      image = await grabFrame();
+    } catch (err) {
+      setMood("sad"); show(cameraErrorText(err));
+      setTimeout(() => setMood("neutral"), 2000);
+      return;
+    } finally {
+      capturing = false;
+    }
+  }
   if (!brain.apiKey) { replyOffline(userText); return; }   // no key = offline brain
   busy = true;
   setMood("thinking");
@@ -604,44 +660,23 @@ async function think(userText, image) {
 }
 
 /* =========================================================
-   5b. VISION: grab one frame from the front camera
+   5b. VISION: live camera preview; frames go to the AI
    ========================================================= */
 const lookBtn = document.getElementById("look");
-const snapImg = document.getElementById("snap");
-let capturing = false, snapTimer = null;
+const flipBtn = document.getElementById("flip");
+const preview = document.getElementById("preview");
+const pv = document.getElementById("pv");
+const IDLE_MS = 60000;                                   // auto-close after 60 s of no activity
+let camStream = null, camOpening = false, capturing = false, idleTimer = null, camGen = 0;
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+const previewOpen = () => !!camStream;
+const camLabel = f => f === "environment" ? "back" : "front";
 
-async function snapshot() {
-  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-    const e = new Error("no camera api"); e.name = "NoCameraAPI"; throw e;
-  }
-  const stream = await navigator.mediaDevices.getUserMedia({
-    video: { facingMode: "user", width: { ideal: 1280 }, height: { ideal: 720 } }, audio: false
-  });
-  try {
-    const video = document.createElement("video");
-    video.muted = true; video.playsInline = true; video.setAttribute("playsinline", "");
-    video.srcObject = stream;
-    await video.play();
-    for (let i = 0; i < 40 && !video.videoWidth; i++) await new Promise(r => setTimeout(r, 50));
-    if (!video.videoWidth) throw new Error("Camera gave no picture");
-    await new Promise(r => setTimeout(r, 400));          // let auto-exposure settle
-    const scale = Math.min(1, 512 / Math.max(video.videoWidth, video.videoHeight));
-    const c = document.createElement("canvas");
-    c.width = Math.round(video.videoWidth * scale);
-    c.height = Math.round(video.videoHeight * scale);
-    c.getContext("2d").drawImage(video, 0, 0, c.width, c.height);
-    video.srcObject = null;
-    return c.toDataURL("image/jpeg", 0.7);
-  } finally {
-    stream.getTracks().forEach(t => t.stop());           // always turn the camera off
-  }
-}
-
-function showThumb(dataUrl) {
-  clearTimeout(snapTimer);
-  snapImg.src = dataUrl;
-  snapImg.classList.add("show");
-  snapTimer = setTimeout(() => snapImg.classList.remove("show"), 3000);
+function noBrainForEyes() {
+  setMood("sad");
+  const line = "I need my AI brain to see! Add a key in settings.";
+  show(`<b>${esc(brain.name)}:</b> ${esc(line)}`);
+  speak(line, () => setTimeout(() => setMood("neutral"), 1200));
 }
 
 function cameraErrorText(err) {
@@ -659,44 +694,126 @@ function cameraErrorText(err) {
   }
 }
 
-async function look(userText) {
-  if (busy || capturing) return;
-  const text = (userText || "").trim() || "What do you see?";
-  if (!brain.apiKey) {
-    setMood("sad");
-    const line = "I need my AI brain to see! Add a key in settings.";
-    show(`<b>${esc(brain.name)}:</b> ${esc(line)}`);
-    speak(line, () => setTimeout(() => setMood("neutral"), 1200));
-    return;
+function stopStream() {
+  if (camStream) camStream.getTracks().forEach(t => t.stop());
+  camStream = null;
+  pv.srcObject = null;
+}
+
+// Ask for the chosen camera; if it doesn't exist, fall back to any camera.
+async function getCamera(want) {
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+    const e = new Error("no camera api"); e.name = "NoCameraAPI"; throw e;
   }
-  capturing = true;
-  setMood("neutral"); lookAt(0, 0);
-  document.body.classList.add("focusing"); lookBtn.classList.add("on");
-  show("Looking…");
-  let image;
+  const size = { width: { ideal: 1280 }, height: { ideal: 720 } };
   try {
-    image = await snapshot();
+    const stream = await navigator.mediaDevices.getUserMedia({ video: { ...size, facingMode: { exact: want } }, audio: false });
+    return { stream, facing: want, fellBack: false };
   } catch (err) {
-    setMood("sad");
-    show(cameraErrorText(err));
-    setTimeout(() => setMood("neutral"), 2000);
-    return;
-  } finally {
-    capturing = false;
-    document.body.classList.remove("focusing"); lookBtn.classList.remove("on");
+    if (!["OverconstrainedError", "NotFoundError", "ConstraintNotSatisfiedError"].includes(err.name)) throw err;
+    const stream = await navigator.mediaDevices.getUserMedia({ video: size, audio: false });
+    const track = stream.getVideoTracks()[0];
+    const facing = (track && track.getSettings && track.getSettings().facingMode) || null;
+    return { stream, facing, fellBack: true };
   }
-  showThumb(image);
-  show(`<b>You:</b> ${esc(text)}`);
-  think(text, image);
+}
+
+// (Re)start the stream for brain.camera. Returns false if the preview was closed meanwhile.
+async function startCamera() {
+  const gen = ++camGen;
+  stopStream();
+  const want = brain.camera === "environment" ? "environment" : "user";
+  const { stream, facing, fellBack } = await getCamera(want);
+  if (gen !== camGen) { stream.getTracks().forEach(t => t.stop()); return false; }
+  camStream = stream;
+  pv.srcObject = stream;
+  pv.classList.toggle("mirror", (facing || "user") === "user");   // unknown (e.g. laptop webcam) = front
+  try { await pv.play(); } catch {}
+  if (fellBack && (want === "environment" ? facing !== "environment" : facing === "environment"))
+    show(`No ${camLabel(want)} camera here, so I'm using the one I've got.`);
+  return true;
+}
+
+function bumpIdle() {
+  clearTimeout(idleTimer);
+  if (!previewOpen() && !camOpening) return;
+  idleTimer = setTimeout(() => { closePreview(); show("Closed my camera to save battery."); }, IDLE_MS);
+}
+
+async function openPreview() {
+  if (!brain.apiKey) { noBrainForEyes(); return false; }
+  if (previewOpen()) { bumpIdle(); return true; }
+  if (camOpening) return false;
+  camOpening = true;
+  document.body.classList.add("previewing");
+  preview.classList.add("open"); lookBtn.classList.add("on");
+  setMood("neutral"); lookAt(0, 7);                      // eyes look down at the preview
+  show("Opening my eyes…");
+  try {
+    if (!(await startCamera())) return false;
+    if (caption.textContent === "Opening my eyes…") show("I'm looking! Ask me what I see.");
+    bumpIdle();
+    return true;
+  } catch (err) {
+    closePreview();
+    setMood("sad"); show(cameraErrorText(err));
+    setTimeout(() => setMood("neutral"), 2000);
+    return false;
+  } finally {
+    camOpening = false;
+  }
+}
+
+function closePreview() {
+  camGen++;                                              // cancels any camera still opening
+  stopStream();
+  clearTimeout(idleTimer);
+  preview.classList.remove("open");
+  document.body.classList.remove("previewing");
+  lookBtn.classList.remove("on");
+  lookAt(0, 0);
+}
+
+// Capture the frame showing right now: max 512px, JPEG quality 0.7. Never mirrored.
+async function grabFrame() {
+  for (let i = 0; i < 40 && !pv.videoWidth; i++) await sleep(50);
+  if (!pv.videoWidth) throw new Error("Camera gave no picture");
+  const scale = Math.min(1, 512 / Math.max(pv.videoWidth, pv.videoHeight));
+  const c = document.createElement("canvas");
+  c.width = Math.round(pv.videoWidth * scale);
+  c.height = Math.round(pv.videoHeight * scale);
+  c.getContext("2d").drawImage(pv, 0, 0, c.width, c.height);
+  preview.classList.add("flash"); document.body.classList.add("focusing");
+  setTimeout(() => preview.classList.remove("flash"), 150);
+  setTimeout(() => document.body.classList.remove("focusing"), 650);
+  return c.toDataURL("image/jpeg", 0.7);
 }
 
 lookBtn.addEventListener("click", () => {
   unlockSpeech();
-  if (listening) { rec && rec.stop(); }
-  const t = typed.value.trim();                          // typed text goes along with the photo
-  typed.value = ""; typed.blur();
-  look(t);
+  if (previewOpen()) closePreview(); else openPreview();
 });
+flipBtn.addEventListener("click", async () => {
+  unlockSpeech();
+  brain.camera = brain.camera === "environment" ? "user" : "environment";
+  save();
+  show(`Switched to the ${camLabel(brain.camera)} camera.`);
+  if (!previewOpen()) return;
+  bumpIdle();
+  try { await startCamera(); }
+  catch (err) { closePreview(); setMood("sad"); show(cameraErrorText(err)); setTimeout(() => setMood("neutral"), 2000); }
+});
+document.getElementById("pvClose").addEventListener("click", () => { closePreview(); show("Camera off."); });
+document.getElementById("pvSnap").addEventListener("click", () => {
+  unlockSpeech();
+  if (busy || capturing) return;
+  const t = "What do you see?";
+  show(`<b>You:</b> ${esc(t)}`);
+  think(t);
+});
+micBtn.addEventListener("click", bumpIdle);              // talking counts as activity
+typed.addEventListener("input", bumpIdle);               // so does typing
+document.addEventListener("visibilitychange", () => { if (document.hidden && previewOpen()) closePreview(); });
 
 /* =========================================================
    6. SETTINGS PANEL
@@ -707,6 +824,7 @@ function openSettings() {
   $("sKey").value = brain.apiKey;
   $("sModel").value = brain.model;
   $("sName").value = brain.name;
+  $("sCamera").value = brain.camera === "environment" ? "environment" : "user";
   $("sPersona").value = brain.persona;
   $("sMemory").value = brain.memory.join("\n");
   $("sPitch").value = brain.pitch ?? 1.4;
@@ -765,7 +883,11 @@ $("btnSave").addEventListener("click", () => {
   brain.voiceName = $("sVoice").value;
   brain.pitch = Number($("sPitch").value);
   brain.rate = Number($("sRate").value);
+  const camChanged = brain.camera !== $("sCamera").value;
+  brain.camera = $("sCamera").value;
   save();
+  if (camChanged && previewOpen())
+    startCamera().catch(err => { closePreview(); show(cameraErrorText(err)); });
   panel.classList.remove("open");
   setMood("happy"); show("Settings saved!");
   setTimeout(() => setMood("neutral"), 1500);
@@ -789,6 +911,7 @@ $("btnImport").addEventListener("click", async () => {
       : old.history;
     if (typeof brain.name !== "string" || !brain.name.trim()) brain.name = DEFAULTS.name;
     if (typeof brain.persona !== "string" || !brain.persona.trim()) brain.persona = DEFAULTS.persona;
+    if (brain.camera !== "environment") brain.camera = "user";
     save(); openSettings();
     $("settingsMsg").textContent = "Backup restored.";
   } catch { $("settingsMsg").textContent = "Copy a backup first, then tap Paste backup."; }
