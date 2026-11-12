@@ -33,10 +33,13 @@
 
   /* ---------- Face ---------- */
   #face {
-    position: fixed; inset: 0 0 90px 0; pointer-events: none;
-    display: flex; align-items: center; justify-content: center;
+    position: fixed; inset: 0; pointer-events: none; z-index: 2;
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
   }
-  #eyes { display: flex; gap: 14vmin; transition: transform .35s cubic-bezier(.3,1.4,.5,1); }
+  /* Fixed height so blinks/moods don't make the mouth jump */
+  #eyes { display: flex; align-items: center; height: 31vmin; gap: 14vmin; transition: transform .35s cubic-bezier(.3,1.4,.5,1); }
+  /* Invisible full-screen layer under every control: tap = talk, swipe up / tap bottom = dock */
+  #tap { position: fixed; inset: 0; z-index: 1; touch-action: none; }
   .eye {
     width: 20vmin; height: 31vmin;
     background: var(--eye);
@@ -111,51 +114,64 @@
 
   body.listening .eye { box-shadow: 0 0 8vmin var(--accent), 0 0 16vmin rgba(42,212,255,.4); }
 
+  #mouthBox { height: 7vmin; margin-top: 9vmin; display: flex; justify-content: center; align-items: flex-start; }
   #mouth {
-    position: fixed; left: 50%; bottom: calc(90px + 9vh);
     width: 10vmin; height: 2vmin; border-radius: 2vmin;
     background: var(--eye); opacity: .85;
-    transform: translateX(-50%);
-    transition: height .08s, background .3s;
+    transition: height .08s, background .3s, width .3s, opacity .3s;
   }
   body.happy #mouth { background: var(--happy); }
   body.sad #mouth { background: var(--sad); }
 
   /* ---------- Caption ---------- */
+  /* Shown only while talking: fades in, fades out 4 s after things go quiet. Max two lines. */
   #caption {
-    position: fixed; left: 0; right: 0; top: 12px;
-    text-align: center; padding: 0 70px;
-    font-size: 16px; line-height: 1.4; color: var(--muted);
-    min-height: 22px;
+    position: fixed; left: 50%; top: calc(16px + env(safe-area-inset-top)); z-index: 6;
+    width: min(90vw, 560px); transform: translateX(-50%);
+    text-align: center; font-size: 17px; line-height: 1.4; color: var(--muted);
+    display: -webkit-box; -webkit-line-clamp: 2; line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+    opacity: 0; transition: opacity .4s; pointer-events: none;
   }
+  #caption.on { opacity: 1; }
   #caption b { color: var(--text); font-weight: 500; }
 
-  /* ---------- Bottom bar ---------- */
-  #bar {
-    position: fixed; left: 0; right: 0; bottom: 0; height: 90px;
-    display: flex; align-items: center; justify-content: center; gap: 10px; z-index: 10;
-    padding: 0 16px calc(env(safe-area-inset-bottom) / 2);
+  /* First-run hint */
+  #hint {
+    position: fixed; left: 50%; bottom: calc(18% + env(safe-area-inset-bottom)); z-index: 6;
+    transform: translateX(-50%); white-space: nowrap;
+    font-size: 14px; color: var(--muted); opacity: 0; transition: opacity .6s; pointer-events: none;
   }
-  #mic {
-    width: 64px; height: 64px; border-radius: 50%;
-    border: none; background: var(--accent); color: #05222b;
-    font-size: 28px; flex-shrink: 0;
+  #hint.on { opacity: .85; }
+  body.dock-open #hint, body.typing #hint { opacity: 0; }
+
+  /* Old buttons stay in the page (the logic uses them) but are never shown. */
+  #mic, #look, #gear { display: none !important; }
+
+  /* ---------- Icons ---------- */
+  .icon { width: 26px; height: 26px; fill: none; stroke: var(--accent); stroke-width: 2;
+          stroke-linecap: round; stroke-linejoin: round; display: block; }
+  .iconbtn {
+    min-width: 48px; min-height: 48px; border: none; border-radius: 16px;
+    background: transparent; color: var(--accent);
+    display: inline-flex; align-items: center; justify-content: center; gap: 6px;
   }
-  #mic.on { background: #ff3b30; animation: pulse 1s infinite; }
-  /* Conversation open (Sprocket will listen again after replying): glowing ring */
-  #mic.convo { box-shadow: 0 0 0 4px rgba(42,212,255,.35), 0 0 18px rgba(42,212,255,.5); }
-  #mic.convo.on { box-shadow: 0 0 0 4px rgba(255,59,48,.35), 0 0 18px rgba(255,59,48,.5); }
-  #look {
-    width: 52px; height: 52px; border-radius: 50%;
-    border: 2px solid var(--accent); background: var(--panel); color: var(--text);
-    font-size: 24px; flex-shrink: 0;
+  .iconbtn:active { background: rgba(42,212,255,.15); }
+
+  /* ---------- Slim dock (swipe up / tap the bottom) ---------- */
+  #dock {
+    position: fixed; left: 50%; bottom: calc(16px + env(safe-area-inset-bottom)); z-index: 30;
+    display: flex; gap: 18px; padding: 6px 14px; border-radius: 24px;
+    background: rgba(17,24,29,.72); border: 1px solid rgba(42,212,255,.18);
+    -webkit-backdrop-filter: blur(12px); backdrop-filter: blur(12px);
+    transform: translate(-50%, 140%); opacity: 0; pointer-events: none;
+    transition: transform .3s cubic-bezier(.2,.9,.3,1.1), opacity .25s;
   }
-  #look.on { background: var(--accent); color: #05222b; }
-  #flip {
-    width: 40px; height: 40px; border-radius: 50%;
-    border: 1px solid #22323a; background: var(--panel); color: var(--text);
-    font-size: 18px; flex-shrink: 0;
+  body.dock-open #dock { transform: translate(-50%, 0); opacity: 1; pointer-events: auto; }
+  #typebar {
+    position: fixed; left: 50%; bottom: calc(86px + env(safe-area-inset-bottom)); z-index: 30;
+    width: min(92vw, 480px); transform: translateX(-50%); display: none;
   }
+  body.typing #typebar { display: block; }
 
   /* ---------- Vision ---------- */
   body.focusing .eye {
@@ -164,8 +180,8 @@
   }
   @keyframes focus { from { transform: scale(1); } to { transform: scale(.7, .5); } }
   #preview {
-    position: fixed; left: 50%; bottom: 100px; z-index: 20;
-    width: 40vw; min-width: 160px; max-width: 360px; min-height: 100px;
+    position: fixed; left: 50%; bottom: calc(20px + env(safe-area-inset-bottom)); z-index: 20;
+    width: 40vw; min-width: 170px; max-width: 360px; min-height: 120px;
     transform: translateX(-50%);
     border-radius: 18px; overflow: hidden; border: 2px solid var(--accent);
     background: #000; box-shadow: 0 0 6vmin rgba(42,212,255,.25);
@@ -177,47 +193,37 @@
   #preview.flash::after {
     content: ""; position: absolute; inset: 0; background: #fff; opacity: .6; pointer-events: none;
   }
-  #preview button {
-    position: absolute; z-index: 21; border: none; border-radius: 999px;
-    background: rgba(5,9,12,.7); color: #fff;
+  #preview .iconbtn {
+    position: absolute; z-index: 21; border-radius: 999px; background: rgba(5,9,12,.7);
   }
-  #pvClose { top: 6px; right: 6px; width: 36px; height: 36px; font-size: 18px; }
+  #pvClose { top: 6px; right: 6px; }
+  #flip { top: 6px; right: 60px; }
   #pvSnap {
     bottom: 8px; left: 50%; transform: translateX(-50%);
-    padding: 8px 14px; font-size: 15px; white-space: nowrap;
+    padding: 0 14px; font-size: 15px; color: var(--text); white-space: nowrap;
   }
+  #pvSnap .icon { width: 22px; height: 22px; }
   /* While the preview is open, the face moves up so the eyes stay visible above it. */
-  body.previewing #face { bottom: calc(100px + 38vh); }
-  body.previewing #mouth { bottom: calc(108px + 38vh); }
+  body.previewing #face { bottom: calc(30px + 38vh); }
 
-  /* ---------- Landscape phone: compact bar, preview beside the face ---------- */
+  /* ---------- Landscape phone: preview beside the face ---------- */
   @media (orientation: landscape) and (max-height: 500px) {
-    #bar { height: 64px; }
-    #mic { width: 52px; height: 52px; font-size: 24px; }
-    #look { width: 44px; height: 44px; font-size: 20px; }
-    #face { bottom: 64px; }
-    #mouth { bottom: calc(64px + 6vh); }
-    #preview { left: auto; right: 12px; bottom: 74px; transform: none; width: 34vw; max-width: none; }
-    #pv { max-height: calc(100vh - 150px); }
-    body.previewing #face { bottom: 64px; right: calc(34vw + 24px); }
-    body.previewing #mouth { bottom: calc(64px + 6vh); left: calc((66vw - 24px) / 2); }
+    #preview { left: auto; right: 12px; bottom: 12px; transform: none; width: 34vw; max-width: none; }
+    #pv { max-height: calc(100vh - 30px); }
+    body.previewing #face { bottom: 0; right: calc(34vw + 24px); }
+    #typebar { bottom: calc(72px + env(safe-area-inset-bottom)); }
   }
-  @keyframes pulse { 50% { transform: scale(1.08); } }
   #typed {
-    flex: 1; max-width: 420px; height: 44px; border-radius: 22px;
-    border: 1px solid #22323a; background: var(--panel); color: var(--text);
-    padding: 0 16px; font-size: 16px; user-select: text; -webkit-user-select: text;
+    width: 100%; height: 48px; border-radius: 24px;
+    border: 1px solid rgba(42,212,255,.35); background: rgba(17,24,29,.92); color: var(--text);
+    padding: 0 18px; font-size: 16px; user-select: text; -webkit-user-select: text;
   }
+  /* Debug label: only with "Show debug info" on */
   #version {
-    position: fixed; bottom: 96px; left: 12px; z-index: 10;
-    font-size: 11px; color: var(--muted); opacity: .7; pointer-events: none;
+    position: fixed; bottom: calc(10px + env(safe-area-inset-bottom)); left: 12px; z-index: 10;
+    font-size: 11px; color: var(--muted); opacity: .6; pointer-events: none; display: none;
   }
-  @media (orientation: landscape) and (max-height: 500px) { #version { bottom: 70px; } }
-  #gear {
-    position: fixed; top: 8px; right: 10px; z-index: 10;
-    width: 44px; height: 44px; border-radius: 50%;
-    border: none; background: transparent; color: var(--muted); font-size: 24px;
-  }
+  body.debug #version { display: block; }
 
   /* ---------- Settings ---------- */
   #settings {
@@ -258,8 +264,9 @@
 </style>
 </head>
 <body>
-  <div id="caption">Tap the mic and talk to me</div>
-  <button id="gear" aria-label="Settings">⚙︎</button>
+  <div id="tap" role="button" aria-label="Tap to talk"></div>
+  <div id="caption" aria-live="polite"></div>
+  <div id="hint">Tap my face to talk · swipe up for more</div>
   <div id="version"></div>
 
   <div id="face">
@@ -267,20 +274,41 @@
       <div class="eye" id="eyeL"></div>
       <div class="eye" id="eyeR"></div>
     </div>
+    <div id="mouthBox"><div id="mouth"></div></div>
   </div>
-  <div id="mouth"></div>
   <div id="zzz"></div>
 
-  <div id="bar">
-    <input id="typed" type="text" placeholder="…or type here" enterkeyhint="send" autocomplete="off">
-    <button id="mic" aria-label="Talk">🎤</button>
-    <button id="look" aria-label="Look">👁</button>
-    <button id="flip" aria-label="Switch camera">🔄</button>
+  <!-- Hidden: the logic drives these; the face, dock and preview are the visible controls -->
+  <button id="mic" aria-label="Talk" hidden></button>
+  <button id="look" aria-label="Look" hidden></button>
+  <button id="gear" aria-label="Settings" hidden></button>
+
+  <div id="typebar">
+    <input id="typed" type="text" placeholder="Type to Sprocket…" enterkeyhint="send" autocomplete="off" aria-label="Message">
   </div>
+  <nav id="dock" aria-label="More">
+    <button class="iconbtn" id="dKeyboard" aria-label="Type a message">
+      <svg class="icon" viewBox="0 0 24 24"><rect x="2" y="6" width="20" height="12" rx="2"/><path d="M6 10h.01M10 10h.01M14 10h.01M18 10h.01M7 14h10"/></svg>
+    </button>
+    <button class="iconbtn" id="dCamera" aria-label="Camera">
+      <svg class="icon" viewBox="0 0 24 24"><path d="M4 8h3l2-3h6l2 3h3a1 1 0 0 1 1 1v9a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V9a1 1 0 0 1 1-1z"/><circle cx="12" cy="13" r="3.5"/></svg>
+    </button>
+    <button class="iconbtn" id="dSettings" aria-label="Settings">
+      <svg class="icon" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg>
+    </button>
+  </nav>
+
   <div id="preview">
     <video id="pv" playsinline muted autoplay></video>
-    <button id="pvClose" aria-label="Close camera">✕</button>
-    <button id="pvSnap">📸 Snap</button>
+    <button class="iconbtn" id="flip" aria-label="Switch camera">
+      <svg class="icon" viewBox="0 0 24 24"><path d="M3 12a9 9 0 0 1 15.5-6.2L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-15.5 6.2L3 16"/><path d="M3 21v-5h5"/></svg>
+    </button>
+    <button class="iconbtn" id="pvClose" aria-label="Close camera">
+      <svg class="icon" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg>
+    </button>
+    <button class="iconbtn" id="pvSnap" aria-label="Snap: ask what Sprocket sees">
+      <svg class="icon" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8"/><circle cx="12" cy="12" r="3"/></svg>Snap
+    </button>
   </div>
 
   <div id="settings">
@@ -300,11 +328,11 @@
         <option value="user">Front</option>
         <option value="environment">Back</option>
       </select>
-      <small>Which camera Sprocket looks through. The 🔄 button switches it too.</small>
+      <small>Which camera Sprocket looks through. The switch button in the camera view changes it too.</small>
 
       <label class="check"><input type="checkbox" id="sConvo"> Keep listening after replies</label>
-      <small>Tap the mic once and just keep talking: Sprocket listens again after each answer. It stops when
-        you go quiet for a bit, or when you tap the mic again.</small>
+      <small>Tap Sprocket's face once and just keep talking: it listens again after each answer. It stops when
+        you go quiet for a bit, or when you tap the face again.</small>
 
       <label class="check"><input type="checkbox" id="sFollow"> Follow faces</label>
       <small>Sprocket's eyes follow your face using the front camera. Face-finding runs on this phone and no
@@ -360,6 +388,8 @@
       <small>Makes a private link holding your API key, model, voice and settings. Open it in any browser
         (GitHub Pages, Live Server, a new phone) and Sprocket is set up instantly. Bookmark it, but
         <b>never share or post it</b>: anyone with the link can use your key.</small>
+      <label class="check"><input type="checkbox" id="sDebug"> Show debug info</label>
+      <small id="debugLine"></small>
       <small id="settingsMsg"></small>
     </div>
   </div>
@@ -369,7 +399,7 @@
    1. STORAGE: everything the robot knows lives in one object,
       saved in this browser's localStorage (on the phone).
    ========================================================= */
-const APP_VERSION = "v2.12";
+const APP_VERSION = "v3.0";
 // iPhone bug: after rotating, fixed buttons can be drawn in one place but tappable in another.
 // Snapping the page back to the top re-syncs them.
 function resyncLayout() {
@@ -403,6 +433,8 @@ const DEFAULTS = {
   camera: "user",    // "user" = front, "environment" = back
   sleepAfter: 2,     // minutes idle before getting sleepy; 0 = never
   followFaces: false,
+  debug: false,      // show version + sleep timer bottom-left
+  hintShown: false,  // first-run "tap my face" hint already shown
   convo: true,       // keep listening after each reply
   character: CHARACTER_VERSION
 };
@@ -498,7 +530,24 @@ let mouthTimer = null;
 function mouthOn() { mouthOff(); mouthTimer = setInterval(() => mouth.style.height = (2 + Math.random() * 5) + "vmin", 90); }
 function mouthOff() { clearInterval(mouthTimer); mouth.style.height = "2vmin"; }
 
-function show(html) { caption.innerHTML = html; }
+// Captions appear only while something is happening, then fade out
+// CAPTION_HOLD_MS after things go quiet (listening, thinking, speaking, snapping).
+const CAPTION_HOLD_MS = 4000;
+let captionActiveAt = 0, captionTimer = null;
+function show(html) {
+  caption.innerHTML = html;
+  if (!html) { caption.classList.remove("on"); return; }
+  caption.classList.add("on");
+  captionActiveAt = Date.now();
+  if (!captionTimer) captionTimer = setInterval(captionTick, 400);
+}
+function captionTick() {
+  if (listening || busy || capturing || camOpening || isSpeaking()) { captionActiveAt = Date.now(); return; }
+  if (Date.now() - captionActiveAt >= CAPTION_HOLD_MS) {
+    caption.classList.remove("on");
+    clearInterval(captionTimer); captionTimer = null;
+  }
+}
 function esc(s) { return String(s).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c])); }
 
 /* =========================================================
@@ -543,6 +592,7 @@ function chooseVoice(name) {
       || all[0];
 }
 function speak(text, onDone, opts = {}) {
+  hideDock();
   if (!("speechSynthesis" in window)) { onDone && onDone(); return; }
   if (speechSynthesis.speaking || speechSynthesis.pending) speechSynthesis.cancel();
   const u = new SpeechSynthesisUtterance(text);
@@ -578,7 +628,7 @@ const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
 let rec = null, listening = false;
 
 // Conversation mode: after one mic tap, Sprocket listens again after each reply,
-// until you go quiet for CONVO_MAX_SILENT rounds or tap the mic again.
+// until you go quiet for CONVO_MAX_SILENT rounds or tap the face again.
 const CONVO_MAX_SILENT = 1;          // one quiet round ends the chat
 const PAUSE_TO_SEND_MS = 1300;       // after you stop talking this long, send (don't wait for the browser)
 const NO_SPEECH_MS = 6000;           // nothing said this long after the mic opens: give up
@@ -614,6 +664,7 @@ function startListening(auto = false) {
     endTimer = setTimeout(() => { if (rec === me) try { me.stop(); } catch {} }, ms);
   };
   rec.onstart = () => {
+    hideDock();
     listening = true; micBtn.classList.add("on"); document.body.classList.add("listening"); show("Listening…");
     stopSoon(NO_SPEECH_MS);
   };
@@ -647,16 +698,16 @@ function startListening(auto = false) {
       think(text);
       return;
     }
-    if (autoBlocked) { endConvo("Tap the mic to keep talking."); return; }
+    if (autoBlocked) { endConvo("Tap my face to keep talking."); return; }
     if (convo) {
       if (++convoSilent < CONVO_MAX_SILENT) setTimeout(() => { if (convo && !listening) startListening(true); }, 300);
-      else endConvo("Chat paused. Tap the mic when you want to talk again.");
+      else endConvo("Chat paused. Tap my face when you want to talk again.");
       return;
     }
-    if (caption.textContent === "Listening…") show("I didn't catch that. Tap the mic and try again.");
+    if (caption.textContent === "Listening…") show("I didn't catch that. Tap my face and try again.");
   };
   try { rec.start(); }
-  catch { rec = null; if (auto) endConvo("Tap the mic to keep talking."); return; }
+  catch { rec = null; if (auto) endConvo("Tap my face to keep talking."); return; }
   // Never hold the mic open for long, even if the browser forgets to end recognition.
   clearTimeout(listenCap);
   listenCap = setTimeout(() => { if (rec) try { rec.stop(); } catch {} }, 15000);
@@ -674,8 +725,12 @@ function releaseMic() {
 }
 document.addEventListener("visibilitychange", () => { if (document.hidden) releaseMic(); });
 window.addEventListener("pagehide", releaseMic);
-micBtn.addEventListener("click", () => {
+// Tap the face (or the hidden mic button): start talking, or stop if already talking.
+// Must run inside the tap handler so iPhone allows speech and the mic.
+micBtn.addEventListener("click", toggleMic);
+function toggleMic() {
   unlockSpeech();
+  bumpIdle();                                            // talking counts as camera-preview activity
   if (convo || listening) {                              // tap again = stop the conversation
     const wasListening = listening;
     endConvo();
@@ -687,7 +742,7 @@ micBtn.addEventListener("click", () => {
   convoSilent = 0;
   if (convo) micBtn.classList.add("convo");
   startListening();
-});
+}
 
 const typed = document.getElementById("typed");
 typed.addEventListener("keydown", (e) => {
@@ -1066,6 +1121,7 @@ function openSettings() {
   $("sCamera").value = brain.camera === "environment" ? "environment" : "user";
   $("sFollow").checked = !!brain.followFaces;
   $("sConvo").checked = brain.convo !== false;
+  $("sDebug").checked = !!brain.debug;
   $("sSleep").value = String([0, 2, 5, 10].includes(brain.sleepAfter) ? brain.sleepAfter : 2);
   $("sPersona").value = brain.persona;
   $("sMemory").value = brain.memory.join("\n");
@@ -1143,6 +1199,8 @@ $("btnSave").addEventListener("click", () => {
   brain.camera = $("sCamera").value;
   brain.sleepAfter = Number($("sSleep").value);
   brain.convo = $("sConvo").checked;
+  brain.debug = $("sDebug").checked;
+  document.body.classList.toggle("debug", brain.debug);
   if (!brain.convo) endConvo();
   const followWas = !!brain.followFaces;
   brain.followFaces = $("sFollow").checked;
@@ -1209,6 +1267,7 @@ function sleepBlocked() {
 }
 
 function goDrowsy() {
+  hideDock(); typed.blur();
   sleepState = "drowsy"; drowsySince = Date.now();
   setMood("sleepy"); lookAt(0, 0);
   const line = "Yawn… powering down";
@@ -1296,6 +1355,7 @@ document.addEventListener("visibilitychange", () => { if (!document.hidden) { po
 
 // Testing aid: the version label also shows the sleep countdown.
 const versionEl = document.getElementById("version");
+const debugLineEl = document.getElementById("debugLine");
 const mmss = ms => { const s = Math.max(0, Math.ceil(ms / 1000)); return Math.floor(s / 60) + ":" + String(s % 60).padStart(2, "0"); };
 function sleepStatus(blocked) {
   const mins = brain.sleepAfter, now = Date.now();
@@ -1306,6 +1366,7 @@ function sleepStatus(blocked) {
   else if (sleepState === "drowsy") st = "asleep in " + mmss(drowsySince + ASLEEP_AFTER_SLEEPY_MS - now);
   else st = "sleepy in " + mmss(lastActivity + mins * 60000 - now);
   versionEl.textContent = APP_VERSION + " · " + st;
+  debugLineEl.textContent = "Version " + APP_VERSION + " · " + st;
 }
 
 setInterval(() => {
@@ -1482,6 +1543,81 @@ document.addEventListener("visibilitychange", () => {
 // Closing the app: make sure every camera track is stopped too.
 window.addEventListener("pagehide", () => { stopTracking(); if (previewOpen() || camOpening) closePreview(); });
 if (brain.followFaces) startTracking();
+
+/* =========================================================
+   9. FACE-FIRST UI: tap the face to talk; swipe up (or tap the
+      bottom of the screen) for a slim dock: keyboard, camera, settings.
+   ========================================================= */
+const tapLayer = document.getElementById("tap");
+const dockEl = document.getElementById("dock");
+const DOCK_HIDE_MS = 5000;
+const SWIPE_UP_PX = 40;
+const DOCK_ZONE = 0.85;              // taps below 85% of the screen height open the dock
+let dockTimer = null;
+
+function showDock() { document.body.classList.add("dock-open"); bumpDock(); }
+function hideDock() { document.body.classList.remove("dock-open"); clearTimeout(dockTimer); }
+function bumpDock() { clearTimeout(dockTimer); dockTimer = setTimeout(hideDock, DOCK_HIDE_MS); }
+const dockOpen = () => document.body.classList.contains("dock-open");
+const typingOpen = () => document.body.classList.contains("typing");
+
+// Swipe up anywhere = dock. A plain tap = talk (bottom strip = dock).
+let tapStart = null, swiped = false;
+tapLayer.addEventListener("pointerdown", (e) => { tapStart = { x: e.clientX, y: e.clientY }; swiped = false; });
+tapLayer.addEventListener("pointerup", (e) => {
+  if (!tapStart) return;
+  const dx = e.clientX - tapStart.x, dy = e.clientY - tapStart.y;
+  tapStart = null;
+  if (dy < -SWIPE_UP_PX && Math.abs(dy) > Math.abs(dx)) {
+    swiped = true;
+    if (!swallowClick && sleepState === "awake") showDock();   // a waking touch only wakes
+  }
+});
+tapLayer.addEventListener("click", (e) => {
+  if (swiped) { swiped = false; return; }
+  if (dockOpen() || typingOpen()) {                      // first tap just tidies away the dock/keyboard
+    hideDock(); typed.blur(); document.body.classList.remove("typing"); return;
+  }
+  if (e.clientY > innerHeight * DOCK_ZONE) { showDock(); return; }
+  toggleMic();                                           // inside the tap handler, as iPhone requires
+});
+
+dockEl.addEventListener("pointerdown", bumpDock);
+document.getElementById("dKeyboard").addEventListener("click", () => {
+  bumpDock();
+  document.body.classList.add("typing");
+  typed.focus();                                         // in the tap handler so the phone keyboard opens
+});
+document.getElementById("dCamera").addEventListener("click", () => {
+  hideDock();
+  if (!previewOpen()) lookBtn.click();
+});
+document.getElementById("dSettings").addEventListener("click", () => { hideDock(); openSettings(); });
+
+// Text box: typing keeps the dock around; it closes once sent or dismissed.
+typed.addEventListener("input", bumpDock);
+typed.addEventListener("blur", () => setTimeout(() => {
+  if (document.activeElement !== typed) document.body.classList.remove("typing");
+}, 150));
+// Keep the text box just above the on-screen keyboard.
+if (window.visualViewport) {
+  const placeTypebar = () => {
+    const kb = Math.max(0, innerHeight - visualViewport.height - visualViewport.offsetTop);
+    document.getElementById("typebar").style.bottom = kb > 50 ? (kb + 12) + "px" : "";
+  };
+  visualViewport.addEventListener("resize", placeTypebar);
+  visualViewport.addEventListener("scroll", placeTypebar);
+}
+
+document.body.classList.toggle("debug", !!brain.debug);
+
+// First launch only: a short hint, then never again.
+if (!brain.hintShown) {
+  const hint = document.getElementById("hint");
+  setTimeout(() => hint.classList.add("on"), 600);
+  setTimeout(() => hint.classList.remove("on"), 5600);
+  brain.hintShown = true; save();
+}
 
 if (setupLoaded) show("Setup loaded! Key, voice and settings are saved in this browser.");
 else if (!brain.apiKey) show("Sprocket here! Say hi, tell me your name, or ask me to rate something");
