@@ -362,7 +362,7 @@
    1. STORAGE: everything the robot knows lives in one object,
       saved in this browser's localStorage (on the phone).
    ========================================================= */
-const APP_VERSION = "v2.8";
+const APP_VERSION = "v2.9";
 // iPhone bug: after rotating, fixed buttons can be drawn in one place but tappable in another.
 // Snapping the page back to the top re-syncs them.
 function resyncLayout() {
@@ -614,7 +614,7 @@ function systemPrompt() {
 Things you remember about your human and your world:
 ${facts}
 
-You are talking out loud through a phone speaker, so stay in character: short, punchy, excited. No emojis, no lists, no markdown.
+You are talking out loud through a phone speaker, so stay in character: short, punchy, excited. No emojis, no lists, no markdown. Write ratings in words, like "9 out of 10", never "9/10".
 
 Sometimes your human shows you a photo from your camera (your eyes). React to what you actually see in it, in character. Never pretend to see something that isn't there.
 
@@ -775,6 +775,9 @@ async function think(userText, image) {
     if (!res.ok) throw new Error(data?.error?.message || ("HTTP " + res.status));
     const raw = data.choices?.[0]?.message?.content || "";
     const reply = parseReply(raw);
+    // Speech reads "9/10" oddly, so always say "9 out of 10".
+    if (typeof reply.say === "string")
+      reply.say = reply.say.replace(/(?<![\d.\/])(\d+(?:\.\d+)?)\s*\/\s*(10|100)\b(?!\/)/g, "$1 out of $2");
 
     brain.history.push({ role: "assistant", content: raw });
     if (Array.isArray(reply.remember)) {
