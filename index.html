@@ -32,7 +32,7 @@
 
   /* ---------- Face ---------- */
   #face {
-    position: fixed; inset: 0 0 90px 0;
+    position: fixed; inset: 0 0 90px 0; pointer-events: none;
     display: flex; align-items: center; justify-content: center;
   }
   #eyes { display: flex; gap: 14vmin; transition: transform .35s cubic-bezier(.3,1.4,.5,1); }
@@ -110,7 +110,7 @@
     padding: 0 16px; font-size: 16px; user-select: text; -webkit-user-select: text;
   }
   #gear {
-    position: fixed; top: 8px; right: 10px;
+    position: fixed; top: 8px; right: 10px; z-index: 10;
     width: 44px; height: 44px; border-radius: 50%;
     border: none; background: transparent; color: var(--muted); font-size: 24px;
   }
