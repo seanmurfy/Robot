@@ -369,7 +369,7 @@
    1. STORAGE: everything the robot knows lives in one object,
       saved in this browser's localStorage (on the phone).
    ========================================================= */
-const APP_VERSION = "v2.11";
+const APP_VERSION = "v2.12";
 // iPhone bug: after rotating, fixed buttons can be drawn in one place but tappable in another.
 // Snapping the page back to the top re-syncs them.
 function resyncLayout() {
@@ -579,7 +579,9 @@ let rec = null, listening = false;
 
 // Conversation mode: after one mic tap, Sprocket listens again after each reply,
 // until you go quiet for CONVO_MAX_SILENT rounds or tap the mic again.
-const CONVO_MAX_SILENT = 2;
+const CONVO_MAX_SILENT = 1;          // one quiet round ends the chat
+const PAUSE_TO_SEND_MS = 1300;       // after you stop talking this long, send (don't wait for the browser)
+const NO_SPEECH_MS = 6000;           // nothing said this long after the mic opens: give up
 let convo = false, convoSilent = 0, awaitingReply = false;
 function endConvo(msg) {
   convo = false; awaitingReply = false; convoSilent = 0;
@@ -604,15 +606,26 @@ function startListening(auto = false) {
   rec.lang = "en-US";
   rec.interimResults = true;
   rec.continuous = false;
-  let finalText = "";
-  rec.onstart = () => { listening = true; micBtn.classList.add("on"); document.body.classList.add("listening"); show("Listening…"); };
+  let finalText = "", lastInterim = "", endTimer = null;
+  const me = rec;
+  // Our own end-of-speech timing: browsers (esp. iPhone) wait a long time before finishing.
+  const stopSoon = ms => {
+    clearTimeout(endTimer);
+    endTimer = setTimeout(() => { if (rec === me) try { me.stop(); } catch {} }, ms);
+  };
+  rec.onstart = () => {
+    listening = true; micBtn.classList.add("on"); document.body.classList.add("listening"); show("Listening…");
+    stopSoon(NO_SPEECH_MS);
+  };
   rec.onresult = (e) => {
     let interim = "";
     for (let i = e.resultIndex; i < e.results.length; i++) {
       const t = e.results[i][0].transcript;
       if (e.results[i].isFinal) finalText += t; else interim += t;
     }
+    lastInterim = interim;
     show(`<b>You:</b> ${esc(finalText || interim)}`);
+    stopSoon(PAUSE_TO_SEND_MS);                          // each new word pushes the deadline back
   };
   let autoBlocked = false;
   rec.onerror = (e) => {
@@ -625,7 +638,9 @@ function startListening(auto = false) {
     clearTimeout(listenCap);
     listening = false; rec = null; micBtn.classList.remove("on"); document.body.classList.remove("listening");
     if (document.hidden) return;                         // app was closed mid-sentence: don't answer
-    const text = finalText.trim();
+    clearTimeout(endTimer);
+    // If we stopped it ourselves before the browser marked words "final", use what it heard so far.
+    const text = finalText.trim() || lastInterim.trim();
     if (text) {
       convoSilent = 0;
       if (convo) awaitingReply = true;
