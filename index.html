@@ -6,7 +6,7 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black">
 <meta name="theme-color" content="#05090c">
-<title>Robot Brain v2</title>
+<title>Sprocket</title>
 <style>
   :root {
     --bg: #05090c;
@@ -117,7 +117,7 @@
 
   /* ---------- Settings ---------- */
   #settings {
-    position: fixed; inset: 0; background: rgba(0,0,0,.7);
+    position: fixed; inset: 0; z-index: 100; background: rgba(0,0,0,.7);
     display: none; align-items: flex-start; justify-content: center;
     overflow-y: auto; padding: 20px 12px;
   }
@@ -359,7 +359,7 @@ let rec = null, listening = false;
 
 function startListening() {
   if (!SR) { show("Speech recognition isn't supported here. Type instead."); return; }
-  if (speechSynthesis.speaking) speechSynthesis.cancel();
+  if ("speechSynthesis" in window && speechSynthesis.speaking) speechSynthesis.cancel();
   rec = new SR();
   rec.lang = "en-US";
   rec.interimResults = true;
@@ -610,6 +610,7 @@ $("btnPreview").addEventListener("click", () => {
 });
 $("btnRandomVoice").addEventListener("click", () => {
   unlockSpeech();
+  if (!("speechSynthesis" in window)) return;
   const en = speechSynthesis.getVoices().filter(v => /^en/i.test(v.lang));
   if (!en.length) return;
   const v = pick(en);
@@ -635,13 +636,22 @@ $("btnSave").addEventListener("click", () => {
 $("btnExport").addEventListener("click", async () => {
   const backup = JSON.stringify({ ...brain, apiKey: "" }, null, 2);   // never export the key
   try { await navigator.clipboard.writeText(backup); $("settingsMsg").textContent = "Backup copied. Paste it into Notes to keep it safe."; }
-  catch { $("sMemory").value = backup; $("settingsMsg").textContent = "Couldn't copy automatically. The backup is in the Memory box: select all and copy it."; }
+  catch { prompt("Couldn't copy automatically. Select all and copy this backup:", backup); $("settingsMsg").textContent = "Keep the backup somewhere safe, like Notes."; }
 });
 $("btnImport").addEventListener("click", async () => {
   try {
     const text = await navigator.clipboard.readText();
     const data = JSON.parse(text);
-    brain = { ...brain, ...data, apiKey: brain.apiKey };
+    if (!data || typeof data !== "object" || Array.isArray(data)) throw new Error("bad backup");
+    const strList = x => Array.isArray(x) ? x.filter(s => typeof s === "string" && s.trim()) : [];
+    const old = brain;
+    brain = { ...brain, ...data, apiKey: old.apiKey };
+    brain.memory = "memory" in data ? strList(data.memory) : old.memory;
+    brain.history = Array.isArray(data.history)
+      ? data.history.filter(h => h && typeof h.content === "string" && (h.role === "user" || h.role === "assistant"))
+      : old.history;
+    if (typeof brain.name !== "string" || !brain.name.trim()) brain.name = DEFAULTS.name;
+    if (typeof brain.persona !== "string" || !brain.persona.trim()) brain.persona = DEFAULTS.persona;
     save(); openSettings();
     $("settingsMsg").textContent = "Backup restored.";
   } catch { $("settingsMsg").textContent = "Copy a backup first, then tap Paste backup."; }
