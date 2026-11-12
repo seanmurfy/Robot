@@ -124,13 +124,15 @@
   body.sad #mouth { background: var(--sad); }
 
   /* ---------- Caption ---------- */
-  /* Shown only while talking: fades in, fades out 4 s after things go quiet. Max two lines. */
+  /* Shown only while talking: fades in, fades out after things go quiet.
+     Plain block (no -webkit-line-clamp: iPhone draws it garbled when the text changes);
+     long text can use a few lines, and only the overflow past ~30% of the screen is hidden. */
   #caption {
-    position: fixed; left: 50%; top: calc(16px + env(safe-area-inset-top)); z-index: 6;
-    width: min(90vw, 560px); transform: translateX(-50%);
+    position: fixed; left: 0; right: 0; top: calc(14px + env(safe-area-inset-top)); z-index: 6;
+    margin: 0 auto; width: fit-content; max-width: min(92vw, 600px); max-height: 30vh; overflow: hidden;
+    padding: 6px 14px; border-radius: 14px; background: rgba(5,9,12,.72);
     text-align: center; font-size: 17px; line-height: 1.4; color: var(--muted);
-    display: -webkit-box; -webkit-line-clamp: 2; line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
-    opacity: 0; transition: opacity .4s; pointer-events: none;
+    overflow-wrap: anywhere; opacity: 0; transition: opacity .4s; pointer-events: none;
   }
   #caption.on { opacity: 1; }
   #caption b { color: var(--text); font-weight: 500; }
@@ -399,7 +401,7 @@
    1. STORAGE: everything the robot knows lives in one object,
       saved in this browser's localStorage (on the phone).
    ========================================================= */
-const APP_VERSION = "v3.0";
+const APP_VERSION = "v3.1";
 // iPhone bug: after rotating, fixed buttons can be drawn in one place but tappable in another.
 // Snapping the page back to the top re-syncs them.
 function resyncLayout() {
@@ -538,12 +540,16 @@ function show(html) {
   caption.innerHTML = html;
   if (!html) { caption.classList.remove("on"); return; }
   caption.classList.add("on");
+  // Very long live transcripts: keep the newest words in view.
+  caption.scrollTop = caption.scrollHeight;
   captionActiveAt = Date.now();
   if (!captionTimer) captionTimer = setInterval(captionTick, 400);
 }
 function captionTick() {
   if (listening || busy || capturing || camOpening || isSpeaking()) { captionActiveAt = Date.now(); return; }
-  if (Date.now() - captionActiveAt >= CAPTION_HOLD_MS) {
+  // Longer replies stay up longer so there's time to read them.
+  const hold = CAPTION_HOLD_MS + Math.max(0, caption.textContent.length - 80) * 40;
+  if (Date.now() - captionActiveAt >= hold) {
     caption.classList.remove("on");
     clearInterval(captionTimer); captionTimer = null;
   }
@@ -768,6 +774,7 @@ ${facts}
 You are talking out loud through a phone speaker, so stay in character: short, punchy, excited. No emojis, no lists, no markdown. Write ratings in words, like "9 out of 10", never "9/10".
 
 Sometimes your human shows you a photo from your camera (your eyes). React to what you actually see in it, in character. Never pretend to see something that isn't there.
+When a photo comes with a message, answer what your human actually said. Only describe the scene if they ask about it or something new shows up. Never repeat a description, rating or line you already said earlier in this chat: say something new and keep the conversation moving.
 
 ALWAYS reply with ONLY a JSON object, nothing else, in exactly this shape:
 {"say": "what you say out loud", "emotion": "happy|excited|sad|surprised|thinking|sleepy|neutral", "remember": ["new long-term fact", ...]}
@@ -872,13 +879,19 @@ function replyOffline(userText) {
 
 // Phrases that mean "use your camera"
 const LOOK_RE = /\b(what (do|can) you see|look at (this|that|me|my)|take a look|have a look|what am i holding|can you see (this|that|me|my))\b/i;
+// With the preview open, words like these mean "this is about what's in front of you".
+const VISUAL_RE = /\b(see|seeing|look|looks|looking|this|these|those|here|hold|holding|wearing|wear|colou?rs?|show|showing|picture|photo|camera|read|count|how many|who is|who's|what is this|what's this|now)\b/i;
+let photoSentThisPreview = false;                       // reset each time the preview opens
 
 let busy = false;
 async function think(userText, image) {
   if (busy || capturing) return;
-  // With the preview open, everything said or typed goes with the current frame.
-  // A "look" phrase with the preview closed opens it first.
-  if (!image && (previewOpen() || LOOK_RE.test(userText))) {
+  // A "look" phrase opens the camera and snaps. With the preview already open, a fresh frame
+  // only goes along when the words are about what's in view, or for the first thing said:
+  // sending a photo with every sentence made Sprocket describe the same scene over and over.
+  const wantsPhoto = LOOK_RE.test(userText) ||
+    (previewOpen() && (!photoSentThisPreview || VISUAL_RE.test(userText)));
+  if (!image && wantsPhoto) {
     if (!brain.apiKey) { noBrainForEyes(); return; }
     capturing = true;
     try {
@@ -888,6 +901,7 @@ async function think(userText, image) {
       }
       bumpIdle();
       image = await grabFrame();
+      photoSentThisPreview = true;
     } catch (err) {
       setMood("sad"); show(cameraErrorText(err));
       setTimeout(() => setMood("neutral"), 2000);
@@ -919,7 +933,9 @@ async function think(userText, image) {
         model: brain.model || "openrouter/auto",
         messages,
         max_tokens: 300,
-        temperature: 0.8
+        temperature: 0.8,
+        frequency_penalty: 0.5,                          // discourage repeating the same lines
+        presence_penalty: 0.3
       })
     });
     const data = await res.json();
@@ -1038,6 +1054,7 @@ async function openPreview() {
   if (previewOpen()) { bumpIdle(); return true; }
   if (camOpening) return false;
   camOpening = true;
+  photoSentThisPreview = false;
   document.body.classList.add("previewing");
   preview.classList.add("open"); lookBtn.classList.add("on");
   setMood("neutral"); lookAt(0, 7);                      // eyes look down at the preview
