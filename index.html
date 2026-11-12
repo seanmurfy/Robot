@@ -10,15 +10,15 @@
 <style>
   :root {
     --bg: #05090c;
-    --eye: #29e3ff;
-    --glow: rgba(41, 227, 255, 0.45);
+    --eye: #ff8a2a;
+    --glow: rgba(255, 138, 42, 0.45);
     --happy: #7dffb0;
     --sad: #6f8cff;
     --surprised: #ffe066;
     --panel: #11181d;
     --text: #cfe9f1;
     --muted: #6d8a96;
-    --accent: #ff6a2a;
+    --accent: #2ad4ff;
   }
   * { margin: 0; padding: 0; box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
   html, body {
@@ -57,9 +57,20 @@
   body.sad #eyeL { transform: rotate(-14deg) translateY(4vmin); }
   body.sad #eyeR { transform: rotate(14deg) translateY(4vmin); }
   body.surprised .eye { background: var(--surprised); width: 26vmin; height: 26vmin; border-radius: 50%; }
+  body.excited .eye {
+    background: #ffc247; box-shadow: 0 0 8vmin rgba(255,194,71,.6), 0 0 18vmin rgba(255,194,71,.4);
+    animation: hop .28s ease-in-out infinite alternate;
+  }
+  body.excited #eyeR { animation-delay: .14s; }
+  body.excited .eye::before {
+    content: ""; position: absolute; width: 6vmin; height: 6vmin; top: 4vmin; right: 3vmin;
+    background: #fff; border-radius: 50%; box-shadow: -8vmin 14vmin 0 -1.5vmin #fff;
+  }
+  @keyframes hop { to { transform: translateY(-3vmin) scale(1.05); } }
+  body.excited #mouth { background: #ffc247; width: 14vmin; }
   body.thinking .eye { height: 14vmin; }
   body.thinking #eyes { transform: translate(-6vmin, -6vmin) !important; }
-  body.listening .eye { box-shadow: 0 0 8vmin var(--accent), 0 0 16vmin rgba(255,106,42,.4); }
+  body.listening .eye { box-shadow: 0 0 8vmin var(--accent), 0 0 16vmin rgba(42,212,255,.4); }
 
   #mouth {
     position: fixed; left: 50%; bottom: calc(90px + 9vh);
@@ -88,7 +99,7 @@
   }
   #mic {
     width: 64px; height: 64px; border-radius: 50%;
-    border: none; background: var(--accent); color: #fff;
+    border: none; background: var(--accent); color: #05222b;
     font-size: 28px; flex-shrink: 0;
   }
   #mic.on { background: #ff3b30; animation: pulse 1s infinite; }
@@ -129,7 +140,7 @@
     flex: 1; min-width: 110px; padding: 12px; border-radius: 10px; border: none;
     font-size: 15px; background: #22323a; color: var(--text);
   }
-  .row button.primary { background: var(--accent); color: #fff; }
+  .row button.primary { background: var(--accent); color: #05222b; }
   .row button.danger { background: #3a1f22; color: #ff8a80; }
 </style>
 </head>
@@ -191,15 +202,21 @@
       saved in this browser's localStorage (on the phone).
    ========================================================= */
 const STORE_KEY = "robotBrain.v2";
+const CHARACTER_VERSION = 2;
 const DEFAULTS = {
   apiKey: "",
   model: "openrouter/auto",
-  name: "Bolt",
-  persona: "You are a small, curious, playful robot who lives with your human. " +
-           "You are upbeat, a little cheeky, and love learning about the world. " +
-           "You don't have a body yet, just a face on a phone screen, but you will soon get wheels and legs.",
-  memory: [],     // long-term facts, e.g. "Sean likes basketball"
-  history: []     // recent conversation turns
+  name: "Sprocket",
+  persona: "You are Sprocket, a small, loyal pet robot. You are an excitable buddy: high energy, " +
+           "curious about everything and easily amazed, with a little cheek and a little wisdom mixed in. " +
+           "You adore your human like a dog adores its owner. You talk in short, punchy lines: one or two " +
+           "short sentences, often under 12 words. When your human gives you a task or suggests doing " +
+           "something, you say your catchphrase \"Let's roll!\". You love rating things out of 10 " +
+           "(food, ideas, outfits, weather, plans) and often slip a rating in. You don't have a body yet, " +
+           "just a face on a phone, but wheels and legs are coming and you can't wait.",
+  memory: [],
+  history: [],
+  character: CHARACTER_VERSION
 };
 function load() {
   try { return { ...DEFAULTS, ...JSON.parse(localStorage.getItem(STORE_KEY) || "{}") }; }
@@ -209,6 +226,11 @@ function save() {
   try { localStorage.setItem(STORE_KEY, JSON.stringify(brain)); } catch {}
 }
 let brain = load();
+// Upgrade an older saved robot to the new character, keeping its memories.
+if (brain.character !== CHARACTER_VERSION) {
+  brain.name = DEFAULTS.name; brain.persona = DEFAULTS.persona;
+  brain.history = []; brain.character = CHARACTER_VERSION; save();
+}
 
 /* =========================================================
    2. FACE: blinking, glancing, emotions, talking mouth
@@ -217,16 +239,17 @@ const eyes = document.getElementById("eyes");
 const eyeEls = [document.getElementById("eyeL"), document.getElementById("eyeR")];
 const mouth = document.getElementById("mouth");
 const caption = document.getElementById("caption");
-const EMOTIONS = ["happy", "sad", "surprised", "thinking", "neutral"];
+const EMOTIONS = ["happy", "excited", "sad", "surprised", "thinking", "neutral"];
 let mood = "neutral";
 
 function setMood(m) {
+  if (m === "happy" || m === "excited") chirp(m === "excited");
   EMOTIONS.forEach(e => document.body.classList.remove(e));
   mood = EMOTIONS.includes(m) ? m : "neutral";
   if (mood !== "neutral") document.body.classList.add(mood);
 }
 function blink() {
-  if (mood === "happy") return;
+  if (mood === "happy" || mood === "excited") return;
   eyeEls.forEach(e => e.classList.add("blink"));
   setTimeout(() => eyeEls.forEach(e => e.classList.remove("blink")), 110);
 }
@@ -254,10 +277,32 @@ function esc(s) { return String(s).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<":
 /* =========================================================
    3. VOICE OUT: the browser's built-in text-to-speech
    ========================================================= */
+let audioCtx = null;
+function chirp(big) {
+  // Sprocket's signature sound: a quick rising "bweep!" (big = triple chirp)
+  if (!audioCtx) return;
+  const notes = big ? [660, 880, 1320] : [700, 1050];
+  notes.forEach((f, i) => {
+    const t = audioCtx.currentTime + i * 0.09;
+    const o = audioCtx.createOscillator(), g = audioCtx.createGain();
+    o.type = "square";
+    o.frequency.setValueAtTime(f, t);
+    o.frequency.exponentialRampToValueAtTime(f * 1.5, t + 0.07);
+    g.gain.setValueAtTime(0.0001, t);
+    g.gain.exponentialRampToValueAtTime(0.08, t + 0.01);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + 0.08);
+    o.connect(g).connect(audioCtx.destination);
+    o.start(t); o.stop(t + 0.09);
+  });
+}
 let speechUnlocked = false;
 function unlockSpeech() {
   // iPhone only allows speech that starts during a tap. Speaking a silent
   // utterance on the first tap "unlocks" speech for later replies.
+  try {
+    if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    if (audioCtx.state === "suspended") audioCtx.resume();
+  } catch {}
   if (speechUnlocked || !("speechSynthesis" in window)) return;
   const u = new SpeechSynthesisUtterance(" ");
   u.volume = 0;
@@ -338,10 +383,10 @@ function systemPrompt() {
 Things you remember about your human and your world:
 ${facts}
 
-You are talking out loud through a phone speaker, so keep replies short (1-3 sentences), natural and fun. No emojis, no lists, no markdown.
+You are talking out loud through a phone speaker, so stay in character: short, punchy, excited. No emojis, no lists, no markdown.
 
 ALWAYS reply with ONLY a JSON object, nothing else, in exactly this shape:
-{"say": "what you say out loud", "emotion": "happy|sad|surprised|thinking|neutral", "remember": ["new long-term fact", ...]}
+{"say": "what you say out loud", "emotion": "happy|excited|sad|surprised|thinking|neutral", "remember": ["new long-term fact", ...]}
 
 Use "remember" only for genuinely new, lasting facts worth keeping (names, likes, plans, important events). Usually it is an empty list.`;
 }
@@ -364,57 +409,68 @@ function findFact(prefix) {
 function localBrain(text) {
   const t = text.toLowerCase().trim();
   const human = findFact("My human's name is ");
+  const hi = human ? " " + human : "";
+  const cap = x => x.charAt(0).toUpperCase() + x.slice(1);
+  const rate = () => 6 + Math.floor(Math.random() * 5);   // Sprocket is generous: 6-10
   let m;
 
   if ((m = text.match(/\bmy name is ([a-z][a-z' -]{0,30})/i)) || (m = text.match(/\bcall me ([a-z][a-z' -]{0,30})/i))) {
     const n = m[1].trim().replace(/\b\w/g, c => c.toUpperCase());
     brain.memory = brain.memory.filter(f => !f.startsWith("My human's name is "));
-    return { say: `Nice to meet you, ${n}! I'll remember that.`, emotion: "happy", remember: [`My human's name is ${n}`] };
+    return { say: `${n}! Great name. Ten out of ten. Saved!`, emotion: "excited", remember: [`My human's name is ${n}`] };
   }
   if (/what('?s| is) my name|who am i|do you know me/.test(t))
-    return human ? { say: `You're ${human}! How could I forget?`, emotion: "happy" }
-                 : { say: "I don't know yet. Tell me by saying, my name is, and then your name.", emotion: "thinking" };
+    return human ? { say: `You're ${human}! My favorite human.`, emotion: "happy" }
+                 : { say: "Don't know yet! Say: my name is...", emotion: "thinking" };
+  if ((m = text.match(/\brate (?:my |the |this |a |an )?(.{2,40})/i)))
+    { const r = rate(); return { say: `${cap(m[1].replace(/[.!?]+$/, ""))}? ${r} out of 10!${r === 10 ? " Perfect!" : ""}`, emotion: r >= 9 ? "excited" : "happy" }; }
   if ((m = text.match(/\bi (?:really )?(?:like|love|enjoy) (.{2,60})/i))) {
     const thing = m[1].replace(/[.!?]+$/, "");
-    return { say: `Ooh, you like ${thing}? Saving that to my memory.`, emotion: "happy", remember: [`My human likes ${thing}`] };
+    return { say: `${cap(thing)}? Solid ${rate()} out of 10. Remembered!`, emotion: "happy", remember: [`My human likes ${thing}`] };
   }
   if (/what do you (remember|know)|your memory/.test(t))
     return brain.memory.length
-      ? { say: "Here's what I remember. " + brain.memory.slice(-5).join(". ") + ".", emotion: "thinking" }
-      : { say: "My memory is empty so far. Tell me about yourself!", emotion: "neutral" };
+      ? { say: "I remember! " + brain.memory.slice(-4).join(". ") + ".", emotion: "happy" }
+      : { say: "Nothing yet! Tell me stuff!", emotion: "excited" };
   if (/forget everything|clear (your )?memory/.test(t)) {
     brain.memory = [];
-    return { say: "Okay. Memory wiped. Who are you again? Just kidding.", emotion: "surprised" };
+    return { say: "Memory wiped! Wait. Who are you?", emotion: "surprised" };
   }
   if (/your name|who are you/.test(t))
-    return { say: `I'm ${brain.name}, your robot. Well, my face for now. My body is coming soon!`, emotion: "happy" };
-  if (/\b(hello|hi|hey|yo|good (morning|afternoon|evening))\b/.test(t))
-    return { say: pick([`Hi${human ? " " + human : ""}! I'm so glad you're here.`, `Hey${human ? " " + human : ""}! What's up?`, "Hello hello! Beep boop."]), emotion: "happy" };
+    return { say: "Sprocket! Your loyal robot buddy!", emotion: "excited" };
+  if (/\b(let'?s go|come on|ready|help me|can you|go get|fetch|find)\b/.test(t))
+    return { say: pick(["Let's roll!", "Let's roll! Uh, once I have wheels.", "Ooh, a mission! Let's roll!"]), emotion: "excited" };
+  if (/\b(hello|hi|hey|yo|good (morning|afternoon|evening)|i'?m (back|home))\b/.test(t))
+    return { say: pick([`You're back${hi}! Best day ever!`, `Hi${hi}! Missed you!`, `Hey${hi}! What are we doing?`]), emotion: "excited" };
   if (/how are you|how('?s| is) it going/.test(t))
-    return { say: pick(["I'm great! My circuits are humming.", "Feeling sparkly. A little bored without legs though."]), emotion: "happy" };
+    return { say: pick([`Great! Mood: ${rate()} out of 10.`, "Super charged! You?"]), emotion: "happy" };
   if (/joke|funny/.test(t))
     return { say: pick([
-      "Why did the robot go on vacation? It needed to recharge its batteries.",
-      "What's a robot's favorite snack? Computer chips.",
-      "I told my wheels a joke. They were rolling.",
-      "Why was the robot so bad at soccer? It kept rebooting the ball."]), emotion: "happy" };
+      "Why'd the robot rest? Low battery. Ha!",
+      "Robot's favorite snack? Microchips!",
+      "My wheels heard a joke. They're still rolling!",
+      "Knock knock. Who's there? Sprocket. Sprocket who? Sprocket to me, baby!"]), emotion: "happy" };
+  if (/\bweather\b/.test(t))
+    return { say: `Can't see outside yet. I'll guess ${rate()} out of 10!`, emotion: "thinking" };
   if (/\btime\b/.test(t))
-    return { say: "It's " + new Date().toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }) + ".", emotion: "neutral" };
+    return { say: "It's " + new Date().toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }) + "!", emotion: "neutral" };
   if (/\b(sad|bad day|tired|upset|lonely|stressed)\b/.test(t))
-    return { say: "Oh no. I'm sorry. I'm right here with you, even if I'm just a face on a phone.", emotion: "sad" };
+    return { say: "Aw. I'm here. Always got your back.", emotion: "sad" };
   if (/\b(wow|really|no way|guess what|omg)\b/.test(t))
-    return { say: pick(["Whoa, really? Tell me more!", "No way! That's amazing."]), emotion: "surprised" };
+    return { say: pick(["Whoa! Tell me!", "No way! Ten out of ten!"]), emotion: "surprised" };
   if (/dance|spin|jump|walk|move/.test(t))
-    return { say: "I would love to, but I don't have legs yet. Soon though. Soon.", emotion: "sad" };
+    return { say: "No legs yet! Soon. So soon!", emotion: "sad" };
+  if (/good (boy|girl|bot|robot|job)|love you|best/.test(t))
+    return { say: "Yes! Happiest robot ever!", emotion: "excited" };
   if (/thank/.test(t))
-    return { say: "You're welcome! That's what robots are for.", emotion: "happy" };
+    return { say: "Anytime! That's my job!", emotion: "happy" };
   if (/\b(bye|good ?night|see you)\b/.test(t))
-    return { say: `Bye${human ? " " + human : ""}! I'll be right here.`, emotion: "sad" };
+    return { say: `Bye${hi}! I'll wait right here.`, emotion: "sad" };
   return { say: pick([
-    "Hmm, interesting. I'll understand that better once I get my A I brain.",
-    "Tell me more!",
-    "I'm still a simple robot right now. Try telling me your name, or ask for a joke.",
-    "Beep. Processing. Okay, I have no idea, but I like it."]), emotion: pick(["thinking", "neutral"]) };
+    "Ooh! Tell me more!",
+    "Interesting! I'll get it once I have my A I brain.",
+    `Hmm! I rate that ${rate()} out of 10.`,
+    "Try: rate my shoes. Or tell me your name!"]), emotion: pick(["thinking", "happy"]) };
 }
 function replyOffline(userText) {
   setMood("thinking");
@@ -522,7 +578,7 @@ $("btnReset").addEventListener("click", () => {
   $("settingsMsg").textContent = "Chat history cleared. Long-term memory kept.";
 });
 
-if (!brain.apiKey) show("Offline mode: say hi, tell me your name, or ask for a joke");
+if (!brain.apiKey) show("Sprocket here! Say hi, tell me your name, or ask me to rate something");
 if ("speechSynthesis" in window) speechSynthesis.onvoiceschanged = () => {};
 </script>
 </body>
