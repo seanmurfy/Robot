@@ -240,6 +240,10 @@
   .card textarea { min-height: 90px; resize: vertical; }
   .card input[type=range] { padding: 0; height: 32px; background: transparent; border: none; accent-color: var(--accent); }
   .card select { appearance: none; -webkit-appearance: none; }
+  .card label.check { display: flex; align-items: center; gap: 10px; color: var(--text); font-size: 15px; margin-top: 16px; }
+  .card input[type=checkbox] { width: 22px; height: 22px; padding: 0; flex-shrink: 0; accent-color: var(--accent); }
+  /* While following a face, JS glides the eyes every frame, so turn off the bouncy CSS transition. */
+  body.following #eyes { transition: none; }
   .card small { display: block; color: var(--muted); font-size: 12px; margin-top: 4px; line-height: 1.4; }
   .row { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 16px; }
   .row button {
@@ -294,6 +298,10 @@
         <option value="environment">Back</option>
       </select>
       <small>Which camera Sprocket looks through. The 🔄 button switches it too.</small>
+
+      <label class="check"><input type="checkbox" id="sFollow"> Follow faces</label>
+      <small>Sprocket's eyes follow your face using the front camera. Face-finding runs on this phone and no
+        pictures leave it. The camera stays on while it's switched on, so it uses more battery.</small>
 
       <label for="sSleep">Sleep after</label>
       <select id="sSleep">
@@ -354,7 +362,7 @@
    1. STORAGE: everything the robot knows lives in one object,
       saved in this browser's localStorage (on the phone).
    ========================================================= */
-const APP_VERSION = "v2.7";
+const APP_VERSION = "v2.8";
 // iPhone bug: after rotating, fixed buttons can be drawn in one place but tappable in another.
 // Snapping the page back to the top re-syncs them.
 function resyncLayout() {
@@ -387,6 +395,7 @@ const DEFAULTS = {
   rate: 1.1,
   camera: "user",    // "user" = front, "environment" = back
   sleepAfter: 2,     // minutes idle before getting sleepy; 0 = never
+  followFaces: false,
   character: CHARACTER_VERSION
 };
 function load() {
@@ -446,6 +455,7 @@ const caption = document.getElementById("caption");
 const EMOTIONS = ["happy", "excited", "sad", "surprised", "thinking", "sleepy", "asleep", "neutral"];
 let mood = "neutral";
 let sleepState = "awake";                                 // "awake" | "drowsy" | "asleep" (see section 7)
+let faceFollowing = false;                                // eyes are following a face (see section 8)
 
 function setMood(m) {
   // While drowsy/asleep, leftover "back to neutral" timers must not wake the face.
@@ -465,10 +475,11 @@ function blink() {
   setTimeout(() => { blink(); if (mood !== "sleepy" && Math.random() < .2) setTimeout(blink, 250); blinkLoop(); },
              2000 + Math.random() * 3500);
 })();
-function lookAt(x, y) { eyes.style.transform = `translate(${x}vmin, ${y}vmin)`; }
+let lookX = 0, lookY = 0;                                 // where the eyes are pointed now (vmin)
+function lookAt(x, y) { lookX = +x; lookY = +y; eyes.style.transform = `translate(${x}vmin, ${y}vmin)`; }
 (function glanceLoop() {
   setTimeout(() => {
-    if (mood === "neutral" && !document.body.classList.contains("previewing")) {
+    if (mood === "neutral" && !faceFollowing && !document.body.classList.contains("previewing")) {
       Math.random() < .35 ? lookAt(0, 0)
         : lookAt((Math.random() * 2 - 1) * 8, (Math.random() * 2 - 1) * 4);
     }
@@ -848,6 +859,7 @@ async function getCamera(want) {
 // (Re)start the stream for brain.camera. Returns false if the preview was closed meanwhile.
 async function startCamera() {
   const gen = ++camGen;
+  stopTrackStream();                                     // one camera at a time: the preview takes over face tracking
   stopStream();
   const want = brain.camera === "environment" ? "environment" : "user";
   const { stream, facing, fellBack } = await getCamera(want);
@@ -899,6 +911,7 @@ function closePreview() {
   document.body.classList.remove("previewing");
   lookBtn.classList.remove("on");
   lookAt(0, 0);
+  if (brain.followFaces) setTimeout(startTracking, 300); // hand the camera back to face tracking
 }
 
 // Capture the frame showing right now: max 512px, JPEG quality 0.7. Never mirrored.
@@ -952,6 +965,7 @@ function openSettings() {
   $("sModel").value = brain.model;
   $("sName").value = brain.name;
   $("sCamera").value = brain.camera === "environment" ? "environment" : "user";
+  $("sFollow").checked = !!brain.followFaces;
   $("sSleep").value = String([0, 2, 5, 10].includes(brain.sleepAfter) ? brain.sleepAfter : 2);
   $("sPersona").value = brain.persona;
   $("sMemory").value = brain.memory.join("\n");
@@ -1028,7 +1042,11 @@ $("btnSave").addEventListener("click", () => {
   const camChanged = brain.camera !== $("sCamera").value;
   brain.camera = $("sCamera").value;
   brain.sleepAfter = Number($("sSleep").value);
+  const followWas = !!brain.followFaces;
+  brain.followFaces = $("sFollow").checked;
   save();
+  if (brain.followFaces && !followWas) startTracking();
+  if (!brain.followFaces && followWas) stopTracking();
   if (camChanged && previewOpen())
     startCamera().catch(err => { closePreview(); show(cameraErrorText(err)); });
   panel.classList.remove("open");
@@ -1056,6 +1074,7 @@ $("btnImport").addEventListener("click", async () => {
     if (typeof brain.persona !== "string" || !brain.persona.trim()) brain.persona = DEFAULTS.persona;
     if (brain.camera !== "environment") brain.camera = "user";
     if (![0, 2, 5, 10].includes(brain.sleepAfter)) brain.sleepAfter = 2;
+    brain.followFaces = old.followFaces;                   // device-specific: a backup doesn't switch the camera on
     save(); openSettings();
     $("settingsMsg").textContent = "Backup restored.";
   } catch { $("settingsMsg").textContent = "Copy a backup first, then tap Paste backup."; }
@@ -1197,6 +1216,168 @@ setInterval(() => {
   if (sleepState === "awake" && now - lastActivity >= mins * 60000) goDrowsy();
   else if (sleepState === "drowsy" && now - drowsySince >= ASLEEP_AFTER_SLEEPY_MS) goAsleep();
 }, 1000);
+
+/* =========================================================
+   8. FACE TRACKING: MediaPipe FaceDetector (BlazeFace short range),
+      on-device. Eyes glide toward the biggest face.
+   ========================================================= */
+const MP_URL = "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14";
+const FACE_MODEL_URL = "https://storage.googleapis.com/mediapipe-models/face_detector/blaze_face_short_range/float16/1/blaze_face_short_range.tflite";
+const TRACK_MS = 100;            // ~10 detections per second while awake
+const TRACK_SLEEP_MS = 1000;     // while sleepy/asleep: eyes don't follow, just a slow check so a face can wake Sprocket
+const GREET_GAP_MS = 10000;      // a face after 10 s of none gets a "Hi!"
+const LOSE_MS = 30000;           // no face for 30 s: back to random glancing
+const EASE = 0.2;                // glide 20% of the way to the target each frame
+const RANGE_X = 8, RANGE_Y = 4;  // same range as the random glances (vmin)
+
+let detector = null, detectorLoading = null;
+let trackStream = null, trackVideo = null, trackGen = 0, trackTimer = null;
+let lastFaceAt = 0, targetX = 0, targetY = 0, eyeX = 0, eyeY = 0, easing = false;
+const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
+
+async function loadDetector() {
+  if (detector) return detector;
+  if (!detectorLoading) detectorLoading = (async () => {
+    const { FilesetResolver, FaceDetector } = await import(MP_URL + "/vision_bundle.mjs");
+    const files = await FilesetResolver.forVisionTasks(MP_URL + "/wasm");
+    const opts = delegate => ({
+      baseOptions: { modelAssetPath: FACE_MODEL_URL, delegate },
+      runningMode: "VIDEO", minDetectionConfidence: 0.5
+    });
+    try { return await FaceDetector.createFromOptions(files, opts("GPU")); }
+    catch { return await FaceDetector.createFromOptions(files, opts("CPU")); }
+  })();
+  try { detector = await detectorLoading; return detector; }
+  catch (err) { detectorLoading = null; err.faceModel = true; throw err; }
+}
+
+// Low-res hidden front-camera stream, only used when the live preview is closed.
+async function startTrackStream() {
+  if (trackStream || previewOpen() || camOpening || document.hidden || !brain.followFaces) return;
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+    const e = new Error("no camera api"); e.name = "NoCameraAPI"; throw e;
+  }
+  const gen = ++trackGen;
+  const stream = await navigator.mediaDevices.getUserMedia({
+    video: { facingMode: "user", width: { ideal: 320 }, height: { ideal: 240 }, frameRate: { ideal: 15 } }, audio: false
+  });
+  // The preview may have opened (or tracking stopped) while we waited: never hold two streams.
+  if (gen !== trackGen || previewOpen() || camOpening || document.hidden || !brain.followFaces) {
+    stream.getTracks().forEach(t => t.stop()); return;
+  }
+  trackStream = stream;
+  if (!trackVideo) {
+    trackVideo = document.createElement("video");
+    trackVideo.muted = true; trackVideo.playsInline = true; trackVideo.setAttribute("playsinline", "");
+    // In the page (some phones won't run a detached video) but invisible and untappable.
+    trackVideo.style.cssText = "position:fixed;left:0;top:0;width:1px;height:1px;opacity:0;pointer-events:none;";
+    document.body.appendChild(trackVideo);
+  }
+  trackVideo.srcObject = stream;
+  try { await trackVideo.play(); } catch {}
+}
+function stopTrackStream() {
+  trackGen++;
+  if (trackStream) trackStream.getTracks().forEach(t => t.stop());
+  trackStream = null;
+  if (trackVideo) trackVideo.srcObject = null;
+}
+
+async function startTracking() {
+  if (!brain.followFaces || document.hidden) return;
+  try {
+    if (!detector) show("Loading my face-finder…");
+    await loadDetector();
+    if (!brain.followFaces) return;
+    await startTrackStream();
+    if (caption.textContent === "Loading my face-finder…") show("I'll keep an eye out for you!");
+    scheduleTrack(TRACK_MS);
+  } catch (err) { trackingFailed(err); }
+}
+function stopTracking() {
+  clearTimeout(trackTimer); trackTimer = null;
+  stopTrackStream();
+  stopFollowing();
+}
+function trackingFailed(err) {
+  brain.followFaces = false; save();
+  stopTracking();
+  const box = document.getElementById("sFollow"); if (box) box.checked = false;
+  let msg;
+  if (err && err.faceModel) msg = "Couldn't load my face-finder (internet?), so I turned Follow faces off.";
+  else if (err && (err.name === "NotAllowedError" || err.name === "SecurityError")) msg = "Camera blocked, so I turned Follow faces off.";
+  else msg = "Couldn't start the camera, so I turned Follow faces off.";
+  setMood("sad"); show(msg);
+  setTimeout(() => setMood("neutral"), 2000);
+}
+
+function scheduleTrack(ms) { clearTimeout(trackTimer); trackTimer = setTimeout(trackTick, ms); }
+function trackTick() {
+  trackTimer = null;
+  if (!brain.followFaces || !detector || document.hidden) return;   // visibilitychange restarts it
+  const next = sleepState === "awake" ? TRACK_MS : TRACK_SLEEP_MS;
+  if (capturing || camOpening) return scheduleTrack(next);           // paused during snapshots
+  let src;
+  if (previewOpen()) src = pv;                                       // reuse the preview's stream
+  else if (trackStream) src = trackVideo;
+  else { startTrackStream().catch(trackingFailed); return scheduleTrack(500); }
+  if (!src.videoWidth || src.readyState < 2) return scheduleTrack(next);
+  let faces = [];
+  try { faces = detector.detectForVideo(src, performance.now()).detections || []; }
+  catch { return scheduleTrack(next); }
+  if (faces.length) {
+    const area = d => d.boundingBox.width * d.boundingBox.height;
+    onFace(faces.reduce((a, b) => area(b) > area(a) ? b : a), src);
+  } else if (faceFollowing && Date.now() - lastFaceAt > LOSE_MS) {
+    stopFollowing();
+  }
+  scheduleTrack(next);
+}
+
+function onFace(face, src) {
+  const now = Date.now(), gap = now - lastFaceAt;
+  lastFaceAt = now;
+  if (sleepState !== "awake") { wake(); return; }       // sitting down in front of Sprocket wakes it
+  poke();                                               // a face counts as activity
+  if (gap >= GREET_GAP_MS) greetFace();
+  if (previewOpen()) return;                            // with the preview open, eyes keep looking at it
+  const b = face.boundingBox;
+  const nx = (b.originX + b.width / 2) / src.videoWidth - 0.5;    // -0.5 … 0.5
+  const ny = (b.originY + b.height / 2) / src.videoHeight - 0.5;
+  // Camera frames are un-mirrored: when you move to your left you show up on the image's right.
+  // Flip x so the eyes move to your left too.
+  targetX = clamp(-nx * 3 * RANGE_X, -RANGE_X, RANGE_X);
+  targetY = clamp(ny * 3 * RANGE_Y, -RANGE_Y, RANGE_Y);
+  if (!faceFollowing) {
+    faceFollowing = true;
+    eyeX = lookX; eyeY = lookY;                          // start the glide from wherever the eyes are
+    document.body.classList.add("following");
+  }
+  if (!easing) { easing = true; requestAnimationFrame(easeEyes); }
+}
+function easeEyes() {
+  if (!faceFollowing || sleepState !== "awake" || previewOpen()) { easing = false; return; }
+  eyeX += (targetX - eyeX) * EASE;
+  eyeY += (targetY - eyeY) * EASE;
+  lookAt(eyeX.toFixed(2), eyeY.toFixed(2));
+  requestAnimationFrame(easeEyes);
+}
+function stopFollowing() {
+  faceFollowing = false;
+  document.body.classList.remove("following");
+}
+function greetFace() {
+  if (mood !== "neutral" || busy || listening || capturing || isSpeaking() || waking) return;
+  setMood("happy");                                     // happy chirp, no speech
+  show(`<b>${esc(brain.name)}:</b> Hi!`);
+  setTimeout(() => { if (mood === "happy") setMood("neutral"); }, 1200);
+}
+
+document.addEventListener("visibilitychange", () => {
+  if (document.hidden) { clearTimeout(trackTimer); trackTimer = null; stopTrackStream(); }
+  else if (brain.followFaces) startTracking();
+});
+if (brain.followFaces) startTracking();
 
 if (setupLoaded) show("Setup loaded! Key, voice and settings are saved in this browser.");
 else if (!brain.apiKey) show("Sprocket here! Say hi, tell me your name, or ask me to rate something");
