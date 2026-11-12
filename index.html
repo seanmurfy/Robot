@@ -621,7 +621,7 @@ $("btnClose").addEventListener("click", () => panel.classList.remove("open"));
 $("btnSave").addEventListener("click", () => {
   brain.apiKey = $("sKey").value.trim();
   brain.model = $("sModel").value.trim() || "openrouter/auto";
-  brain.name = $("sName").value.trim() || "Bolt";
+  brain.name = $("sName").value.trim() || DEFAULTS.name;
   brain.persona = $("sPersona").value.trim() || DEFAULTS.persona;
   brain.memory = $("sMemory").value.split("\n").map(s => s.trim()).filter(Boolean);
   brain.voiceName = $("sVoice").value;
