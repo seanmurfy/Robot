@@ -20,6 +20,7 @@ Loyal pet robot, excitable buddy (with a little cheek and wisdom). Short, punchy
 
 ## Rules
 - Never put the OpenRouter API key (or any secret) in the code. The repo is public. The key is entered in the in-app settings and stored only in the browser.
+- Bump `APP_VERSION` in `index.html` (shown top-left on screen) with every change, so it's clear which build the phone has loaded.
 - Keep it a single self-contained `index.html` unless there's a strong reason to split.
 - iPhone quirks: speech must start inside a tap/click handler (see `unlockSpeech()`); silent mode mutes browser speech; fixed-position overlays need explicit `z-index` so buttons stay tappable.
 - Test locally with the Live Server extension (port 5500); test on the phone via VS Code port forwarding (public visibility).
