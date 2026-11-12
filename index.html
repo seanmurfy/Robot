@@ -362,7 +362,7 @@
    1. STORAGE: everything the robot knows lives in one object,
       saved in this browser's localStorage (on the phone).
    ========================================================= */
-const APP_VERSION = "v2.9";
+const APP_VERSION = "v2.10";
 // iPhone bug: after rotating, fixed buttons can be drawn in one place but tappable in another.
 // Snapping the page back to the top re-syncs them.
 function resyncLayout() {
@@ -581,12 +581,29 @@ function startListening() {
     else if (e.error !== "no-speech" && e.error !== "aborted") show("Mic error: " + esc(e.error));
   };
   rec.onend = () => {
-    listening = false; micBtn.classList.remove("on"); document.body.classList.remove("listening");
+    clearTimeout(listenCap);
+    listening = false; rec = null; micBtn.classList.remove("on"); document.body.classList.remove("listening");
+    if (document.hidden) return;                         // app was closed mid-sentence: don't answer
     if (finalText.trim()) think(finalText.trim());
     else if (caption.textContent === "Listening…") show("I didn't catch that. Tap the mic and try again.");
   };
   rec.start();
+  // Never hold the mic open for long, even if the browser forgets to end recognition.
+  clearTimeout(listenCap);
+  listenCap = setTimeout(() => { if (rec) try { rec.stop(); } catch {} }, 15000);
 }
+let listenCap = null;
+// Fully release the mic (and speech/sound) when the app is closed or hidden.
+function releaseMic() {
+  clearTimeout(listenCap);
+  if (rec) { try { rec.abort(); } catch {} }
+  rec = null; listening = false;
+  micBtn.classList.remove("on"); document.body.classList.remove("listening");
+  if ("speechSynthesis" in window) speechSynthesis.cancel();
+  if (audioCtx && audioCtx.state === "running") audioCtx.suspend().catch(() => {});
+}
+document.addEventListener("visibilitychange", () => { if (document.hidden) releaseMic(); });
+window.addEventListener("pagehide", releaseMic);
 micBtn.addEventListener("click", () => {
   unlockSpeech();
   if (listening) { rec && rec.stop(); return; }
@@ -1380,6 +1397,8 @@ document.addEventListener("visibilitychange", () => {
   if (document.hidden) { clearTimeout(trackTimer); trackTimer = null; stopTrackStream(); }
   else if (brain.followFaces) startTracking();
 });
+// Closing the app: make sure every camera track is stopped too.
+window.addEventListener("pagehide", () => { stopTracking(); if (previewOpen() || camOpening) closePreview(); });
 if (brain.followFaces) startTracking();
 
 if (setupLoaded) show("Setup loaded! Key, voice and settings are saved in this browser.");
