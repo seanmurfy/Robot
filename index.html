@@ -142,6 +142,9 @@
     font-size: 28px; flex-shrink: 0;
   }
   #mic.on { background: #ff3b30; animation: pulse 1s infinite; }
+  /* Conversation open (Sprocket will listen again after replying): glowing ring */
+  #mic.convo { box-shadow: 0 0 0 4px rgba(42,212,255,.35), 0 0 18px rgba(42,212,255,.5); }
+  #mic.convo.on { box-shadow: 0 0 0 4px rgba(255,59,48,.35), 0 0 18px rgba(255,59,48,.5); }
   #look {
     width: 52px; height: 52px; border-radius: 50%;
     border: 2px solid var(--accent); background: var(--panel); color: var(--text);
@@ -299,6 +302,10 @@
       </select>
       <small>Which camera Sprocket looks through. The 🔄 button switches it too.</small>
 
+      <label class="check"><input type="checkbox" id="sConvo"> Keep listening after replies</label>
+      <small>Tap the mic once and just keep talking: Sprocket listens again after each answer. It stops when
+        you go quiet for a bit, or when you tap the mic again.</small>
+
       <label class="check"><input type="checkbox" id="sFollow"> Follow faces</label>
       <small>Sprocket's eyes follow your face using the front camera. Face-finding runs on this phone and no
         pictures leave it. The camera stays on while it's switched on, so it uses more battery.</small>
@@ -362,7 +369,7 @@
    1. STORAGE: everything the robot knows lives in one object,
       saved in this browser's localStorage (on the phone).
    ========================================================= */
-const APP_VERSION = "v2.10";
+const APP_VERSION = "v2.11";
 // iPhone bug: after rotating, fixed buttons can be drawn in one place but tappable in another.
 // Snapping the page back to the top re-syncs them.
 function resyncLayout() {
@@ -396,6 +403,7 @@ const DEFAULTS = {
   camera: "user",    // "user" = front, "environment" = back
   sleepAfter: 2,     // minutes idle before getting sleepy; 0 = never
   followFaces: false,
+  convo: true,       // keep listening after each reply
   character: CHARACTER_VERSION
 };
 function load() {
@@ -544,9 +552,19 @@ function speak(text, onDone, opts = {}) {
   const v = chooseVoice(opts.voiceName ?? brain.voiceName);
   if (v) { u.voice = v; u.lang = v.lang; }
   u.onstart = mouthOn;
-  u.onend = u.onerror = () => { speakingUntil = 0; mouthOff(); onDone && onDone(); };
   // Our own "still talking" estimate: iPhone's speechSynthesis.speaking can get stuck on true.
-  speakingUntil = Date.now() + Math.min(20000, 1500 + text.length * 90 / u.rate);
+  const estimate = Math.min(20000, 1500 + text.length * 90 / u.rate);
+  speakingUntil = Date.now() + estimate;
+  let finished = false;
+  const finish = () => {
+    if (finished) return; finished = true;
+    clearTimeout(fallback);
+    speakingUntil = 0; mouthOff(); onDone && onDone();
+    continueConvo();                                     // conversation mode: listen again
+  };
+  // iPhone sometimes never reports the end of speech: don't let that stall everything.
+  const fallback = setTimeout(finish, estimate * 1.5 + 1000);
+  u.onend = u.onerror = finish;
   speechSynthesis.speak(u);
 }
 let speakingUntil = 0;
@@ -559,8 +577,28 @@ const micBtn = document.getElementById("mic");
 const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
 let rec = null, listening = false;
 
-function startListening() {
-  if (!SR) { show("Speech recognition isn't supported here. Type instead."); return; }
+// Conversation mode: after one mic tap, Sprocket listens again after each reply,
+// until you go quiet for CONVO_MAX_SILENT rounds or tap the mic again.
+const CONVO_MAX_SILENT = 2;
+let convo = false, convoSilent = 0, awaitingReply = false;
+function endConvo(msg) {
+  convo = false; awaitingReply = false; convoSilent = 0;
+  micBtn.classList.remove("convo");
+  if (msg) show(msg);
+}
+function continueConvo() {                              // called whenever Sprocket finishes speaking
+  if (!convo || !awaitingReply) return;
+  awaitingReply = false;
+  if (document.hidden || sleepState !== "awake" || panel.classList.contains("open")) { endConvo(); return; }
+  setTimeout(() => {
+    if (!convo) return;
+    if (busy || isSpeaking()) { awaitingReply = true; return; }   // still replying: wait for the next finish
+    if (!listening) startListening(true);
+  }, 350);
+}
+
+function startListening(auto = false) {
+  if (!SR) { endConvo(); show("Speech recognition isn't supported here. Type instead."); return; }
   if ("speechSynthesis" in window && speechSynthesis.speaking) speechSynthesis.cancel();
   rec = new SR();
   rec.lang = "en-US";
@@ -576,18 +614,34 @@ function startListening() {
     }
     show(`<b>You:</b> ${esc(finalText || interim)}`);
   };
+  let autoBlocked = false;
   rec.onerror = (e) => {
-    if (e.error === "not-allowed") show("Microphone blocked. Allow it in Settings > Safari > Microphone.");
+    // Some browsers only allow the mic straight after a tap: then conversation mode can't auto-restart.
+    if (auto && (e.error === "not-allowed" || e.error === "service-not-allowed")) autoBlocked = true;
+    else if (e.error === "not-allowed") { endConvo(); show("Microphone blocked. Allow it in Settings > Safari > Microphone."); }
     else if (e.error !== "no-speech" && e.error !== "aborted") show("Mic error: " + esc(e.error));
   };
   rec.onend = () => {
     clearTimeout(listenCap);
     listening = false; rec = null; micBtn.classList.remove("on"); document.body.classList.remove("listening");
     if (document.hidden) return;                         // app was closed mid-sentence: don't answer
-    if (finalText.trim()) think(finalText.trim());
-    else if (caption.textContent === "Listening…") show("I didn't catch that. Tap the mic and try again.");
+    const text = finalText.trim();
+    if (text) {
+      convoSilent = 0;
+      if (convo) awaitingReply = true;
+      think(text);
+      return;
+    }
+    if (autoBlocked) { endConvo("Tap the mic to keep talking."); return; }
+    if (convo) {
+      if (++convoSilent < CONVO_MAX_SILENT) setTimeout(() => { if (convo && !listening) startListening(true); }, 300);
+      else endConvo("Chat paused. Tap the mic when you want to talk again.");
+      return;
+    }
+    if (caption.textContent === "Listening…") show("I didn't catch that. Tap the mic and try again.");
   };
-  rec.start();
+  try { rec.start(); }
+  catch { rec = null; if (auto) endConvo("Tap the mic to keep talking."); return; }
   // Never hold the mic open for long, even if the browser forgets to end recognition.
   clearTimeout(listenCap);
   listenCap = setTimeout(() => { if (rec) try { rec.stop(); } catch {} }, 15000);
@@ -599,6 +653,7 @@ function releaseMic() {
   if (rec) { try { rec.abort(); } catch {} }
   rec = null; listening = false;
   micBtn.classList.remove("on"); document.body.classList.remove("listening");
+  endConvo();
   if ("speechSynthesis" in window) speechSynthesis.cancel();
   if (audioCtx && audioCtx.state === "running") audioCtx.suspend().catch(() => {});
 }
@@ -606,7 +661,16 @@ document.addEventListener("visibilitychange", () => { if (document.hidden) relea
 window.addEventListener("pagehide", releaseMic);
 micBtn.addEventListener("click", () => {
   unlockSpeech();
-  if (listening) { rec && rec.stop(); return; }
+  if (convo || listening) {                              // tap again = stop the conversation
+    const wasListening = listening;
+    endConvo();
+    if (wasListening && rec) rec.stop();                 // still answers what you just said
+    else show("Okay, I'll stop listening.");
+    return;
+  }
+  convo = brain.convo !== false;
+  convoSilent = 0;
+  if (convo) micBtn.classList.add("convo");
   startListening();
 });
 
@@ -986,6 +1050,7 @@ function openSettings() {
   $("sName").value = brain.name;
   $("sCamera").value = brain.camera === "environment" ? "environment" : "user";
   $("sFollow").checked = !!brain.followFaces;
+  $("sConvo").checked = brain.convo !== false;
   $("sSleep").value = String([0, 2, 5, 10].includes(brain.sleepAfter) ? brain.sleepAfter : 2);
   $("sPersona").value = brain.persona;
   $("sMemory").value = brain.memory.join("\n");
@@ -1062,6 +1127,8 @@ $("btnSave").addEventListener("click", () => {
   const camChanged = brain.camera !== $("sCamera").value;
   brain.camera = $("sCamera").value;
   brain.sleepAfter = Number($("sSleep").value);
+  brain.convo = $("sConvo").checked;
+  if (!brain.convo) endConvo();
   const followWas = !!brain.followFaces;
   brain.followFaces = $("sFollow").checked;
   save();
