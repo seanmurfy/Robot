@@ -21,6 +21,7 @@
     --accent: #2ad4ff;
   }
   * { margin: 0; padding: 0; box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
   html, body {
     width: 100%; height: 100%;
     background: var(--bg); color: var(--text);
@@ -147,6 +148,19 @@
   /* While the preview is open, the face moves up so the eyes stay visible above it. */
   body.previewing #face { bottom: calc(100px + 38vh); }
   body.previewing #mouth { bottom: calc(108px + 38vh); }
+
+  /* ---------- Landscape phone: compact bar, preview beside the face ---------- */
+  @media (orientation: landscape) and (max-height: 500px) {
+    #bar { height: 64px; }
+    #mic { width: 52px; height: 52px; font-size: 24px; }
+    #look { width: 44px; height: 44px; font-size: 20px; }
+    #face { bottom: 64px; }
+    #mouth { bottom: calc(64px + 6vh); }
+    #preview { left: auto; right: 12px; bottom: 74px; transform: none; width: 34vw; max-width: none; }
+    #pv { max-height: calc(100vh - 150px); }
+    body.previewing #face { bottom: 64px; right: calc(34vw + 24px); }
+    body.previewing #mouth { bottom: calc(64px + 6vh); left: calc((66vw - 24px) / 2); }
+  }
   @keyframes pulse { 50% { transform: scale(1.08); } }
   #typed {
     flex: 1; max-width: 420px; height: 44px; border-radius: 22px;
@@ -168,7 +182,10 @@
     position: fixed; inset: 0; z-index: 100; background: rgba(0,0,0,.7);
     display: none; align-items: flex-start; justify-content: center;
     overflow-y: auto; padding: 20px 12px;
+    overscroll-behavior: contain; -webkit-overflow-scrolling: touch;
   }
+  /* Save/Close stay pinned to the bottom of the screen while the settings scroll. */
+  #actions { position: sticky; bottom: -20px; background: var(--panel); padding: 10px 0 20px; z-index: 1; }
   #settings.open { display: flex; }
   .card {
     width: 100%; max-width: 520px; background: var(--panel);
@@ -264,7 +281,7 @@
       <textarea id="sMemory"></textarea>
       <small>The robot adds facts here when you tell it things. You can edit or delete lines.</small>
 
-      <div class="row">
+      <div class="row" id="actions">
         <button class="primary" id="btnSave">Save</button>
         <button id="btnClose">Close</button>
       </div>
@@ -282,7 +299,18 @@
    1. STORAGE: everything the robot knows lives in one object,
       saved in this browser's localStorage (on the phone).
    ========================================================= */
-const APP_VERSION = "v2.3";   // bump on every change so you can tell which build the phone loaded
+const APP_VERSION = "v2.4";
+// iPhone bug: after rotating, fixed buttons can be drawn in one place but tappable in another.
+// Snapping the page back to the top re-syncs them.
+function resyncLayout() {
+  setTimeout(() => {
+    const a = document.activeElement;                    // don't fight the on-screen keyboard
+    if (a && /^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName)) return;
+    window.scrollTo(0, 0);
+  }, 300);
+}
+window.addEventListener("orientationchange", resyncLayout);
+window.addEventListener("resize", resyncLayout);   // bump on every change so you can tell which build the phone loaded
 document.getElementById("version").textContent = APP_VERSION;
 const STORE_KEY = "robotBrain.v2";
 const CHARACTER_VERSION = 2;
