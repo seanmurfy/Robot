@@ -1,0 +1,529 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black">
+<meta name="theme-color" content="#05090c">
+<title>Robot Brain v2</title>
+<style>
+  :root {
+    --bg: #05090c;
+    --eye: #29e3ff;
+    --glow: rgba(41, 227, 255, 0.45);
+    --happy: #7dffb0;
+    --sad: #6f8cff;
+    --surprised: #ffe066;
+    --panel: #11181d;
+    --text: #cfe9f1;
+    --muted: #6d8a96;
+    --accent: #ff6a2a;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body {
+    width: 100%; height: 100%;
+    background: var(--bg); color: var(--text);
+    overflow: hidden;
+    font-family: -apple-system, system-ui, sans-serif;
+    user-select: none; -webkit-user-select: none;
+    touch-action: manipulation;
+  }
+
+  /* ---------- Face ---------- */
+  #face {
+    position: fixed; inset: 0 0 90px 0;
+    display: flex; align-items: center; justify-content: center;
+  }
+  #eyes { display: flex; gap: 14vmin; transition: transform .35s cubic-bezier(.3,1.4,.5,1); }
+  .eye {
+    width: 20vmin; height: 31vmin;
+    background: var(--eye);
+    border-radius: 10vmin;
+    box-shadow: 0 0 6vmin var(--glow), 0 0 14vmin var(--glow);
+    position: relative;
+    transition: height .08s ease-in, width .25s, border-radius .25s, background .3s, transform .3s;
+  }
+  .eye.blink { height: 2.5vmin !important; }
+
+  body.happy .eye { background: transparent; box-shadow: none; height: 15vmin; }
+  body.happy .eye::after {
+    content: ""; position: absolute; left: 0; right: 0; top: 0; height: 20vmin;
+    border: 4.5vmin solid var(--happy);
+    border-bottom-color: transparent; border-left-color: transparent; border-right-color: transparent;
+    border-radius: 50%;
+  }
+  body.sad .eye { background: var(--sad); height: 20vmin; border-radius: 10vmin 10vmin 6vmin 6vmin; }
+  body.sad #eyeL { transform: rotate(-14deg) translateY(4vmin); }
+  body.sad #eyeR { transform: rotate(14deg) translateY(4vmin); }
+  body.surprised .eye { background: var(--surprised); width: 26vmin; height: 26vmin; border-radius: 50%; }
+  body.thinking .eye { height: 14vmin; }
+  body.thinking #eyes { transform: translate(-6vmin, -6vmin) !important; }
+  body.listening .eye { box-shadow: 0 0 8vmin var(--accent), 0 0 16vmin rgba(255,106,42,.4); }
+
+  #mouth {
+    position: fixed; left: 50%; bottom: calc(90px + 9vh);
+    width: 10vmin; height: 2vmin; border-radius: 2vmin;
+    background: var(--eye); opacity: .85;
+    transform: translateX(-50%);
+    transition: height .08s, background .3s;
+  }
+  body.happy #mouth { background: var(--happy); }
+  body.sad #mouth { background: var(--sad); }
+
+  /* ---------- Caption ---------- */
+  #caption {
+    position: fixed; left: 0; right: 0; top: 12px;
+    text-align: center; padding: 0 70px;
+    font-size: 16px; line-height: 1.4; color: var(--muted);
+    min-height: 22px;
+  }
+  #caption b { color: var(--text); font-weight: 500; }
+
+  /* ---------- Bottom bar ---------- */
+  #bar {
+    position: fixed; left: 0; right: 0; bottom: 0; height: 90px;
+    display: flex; align-items: center; justify-content: center; gap: 14px;
+    padding: 0 16px calc(env(safe-area-inset-bottom) / 2);
+  }
+  #mic {
+    width: 64px; height: 64px; border-radius: 50%;
+    border: none; background: var(--accent); color: #fff;
+    font-size: 28px; flex-shrink: 0;
+  }
+  #mic.on { background: #ff3b30; animation: pulse 1s infinite; }
+  @keyframes pulse { 50% { transform: scale(1.08); } }
+  #typed {
+    flex: 1; max-width: 420px; height: 44px; border-radius: 22px;
+    border: 1px solid #22323a; background: var(--panel); color: var(--text);
+    padding: 0 16px; font-size: 16px; user-select: text; -webkit-user-select: text;
+  }
+  #gear {
+    position: fixed; top: 8px; right: 10px;
+    width: 44px; height: 44px; border-radius: 50%;
+    border: none; background: transparent; color: var(--muted); font-size: 24px;
+  }
+
+  /* ---------- Settings ---------- */
+  #settings {
+    position: fixed; inset: 0; background: rgba(0,0,0,.7);
+    display: none; align-items: flex-start; justify-content: center;
+    overflow-y: auto; padding: 20px 12px;
+  }
+  #settings.open { display: flex; }
+  .card {
+    width: 100%; max-width: 520px; background: var(--panel);
+    border-radius: 16px; padding: 18px; user-select: text; -webkit-user-select: text;
+  }
+  .card h2 { font-size: 18px; font-weight: 600; margin-bottom: 12px; }
+  .card label { display: block; font-size: 13px; color: var(--muted); margin: 12px 0 4px; }
+  .card input, .card textarea {
+    width: 100%; background: #0a1014; color: var(--text);
+    border: 1px solid #22323a; border-radius: 10px; padding: 10px; font-size: 15px;
+    font-family: inherit;
+  }
+  .card textarea { min-height: 90px; resize: vertical; }
+  .card small { display: block; color: var(--muted); font-size: 12px; margin-top: 4px; line-height: 1.4; }
+  .row { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 16px; }
+  .row button {
+    flex: 1; min-width: 110px; padding: 12px; border-radius: 10px; border: none;
+    font-size: 15px; background: #22323a; color: var(--text);
+  }
+  .row button.primary { background: var(--accent); color: #fff; }
+  .row button.danger { background: #3a1f22; color: #ff8a80; }
+</style>
+</head>
+<body>
+  <div id="caption">Tap the mic and talk to me</div>
+  <button id="gear" aria-label="Settings">⚙︎</button>
+
+  <div id="face">
+    <div id="eyes">
+      <div class="eye" id="eyeL"></div>
+      <div class="eye" id="eyeR"></div>
+    </div>
+  </div>
+  <div id="mouth"></div>
+
+  <div id="bar">
+    <input id="typed" type="text" placeholder="…or type here" enterkeyhint="send" autocomplete="off">
+    <button id="mic" aria-label="Talk">🎤</button>
+  </div>
+
+  <div id="settings">
+    <div class="card">
+      <h2>Robot settings</h2>
+
+      <label for="sKey">OpenRouter API key</label>
+      <input id="sKey" type="password" placeholder="sk-or-..." autocomplete="off">
+      <small>Saved only on this phone, in this browser. Never put it in the HTML file.</small>
+
+      <label for="sModel">AI model</label>
+      <input id="sModel" type="text" placeholder="openrouter/auto">
+      <small>Any model name from openrouter.ai/models. "openrouter/auto" picks one for you.</small>
+
+      <label for="sName">Robot name</label>
+      <input id="sName" type="text">
+
+      <label for="sPersona">Personality</label>
+      <textarea id="sPersona"></textarea>
+
+      <label for="sMemory">Memory (one fact per line)</label>
+      <textarea id="sMemory"></textarea>
+      <small>The robot adds facts here when you tell it things. You can edit or delete lines.</small>
+
+      <div class="row">
+        <button class="primary" id="btnSave">Save</button>
+        <button id="btnClose">Close</button>
+      </div>
+      <div class="row">
+        <button id="btnExport">Copy backup</button>
+        <button id="btnImport">Paste backup</button>
+        <button class="danger" id="btnReset">Forget chat</button>
+      </div>
+      <small id="settingsMsg"></small>
+    </div>
+  </div>
+
+<script>
+/* =========================================================
+   1. STORAGE: everything the robot knows lives in one object,
+      saved in this browser's localStorage (on the phone).
+   ========================================================= */
+const STORE_KEY = "robotBrain.v2";
+const DEFAULTS = {
+  apiKey: "",
+  model: "openrouter/auto",
+  name: "Bolt",
+  persona: "You are a small, curious, playful robot who lives with your human. " +
+           "You are upbeat, a little cheeky, and love learning about the world. " +
+           "You don't have a body yet, just a face on a phone screen, but you will soon get wheels and legs.",
+  memory: [],     // long-term facts, e.g. "Sean likes basketball"
+  history: []     // recent conversation turns
+};
+function load() {
+  try { return { ...DEFAULTS, ...JSON.parse(localStorage.getItem(STORE_KEY) || "{}") }; }
+  catch { return { ...DEFAULTS }; }
+}
+function save() {
+  try { localStorage.setItem(STORE_KEY, JSON.stringify(brain)); } catch {}
+}
+let brain = load();
+
+/* =========================================================
+   2. FACE: blinking, glancing, emotions, talking mouth
+   ========================================================= */
+const eyes = document.getElementById("eyes");
+const eyeEls = [document.getElementById("eyeL"), document.getElementById("eyeR")];
+const mouth = document.getElementById("mouth");
+const caption = document.getElementById("caption");
+const EMOTIONS = ["happy", "sad", "surprised", "thinking", "neutral"];
+let mood = "neutral";
+
+function setMood(m) {
+  EMOTIONS.forEach(e => document.body.classList.remove(e));
+  mood = EMOTIONS.includes(m) ? m : "neutral";
+  if (mood !== "neutral") document.body.classList.add(mood);
+}
+function blink() {
+  if (mood === "happy") return;
+  eyeEls.forEach(e => e.classList.add("blink"));
+  setTimeout(() => eyeEls.forEach(e => e.classList.remove("blink")), 110);
+}
+(function blinkLoop() {
+  setTimeout(() => { blink(); if (Math.random() < .2) setTimeout(blink, 250); blinkLoop(); },
+             2000 + Math.random() * 3500);
+})();
+function lookAt(x, y) { eyes.style.transform = `translate(${x}vmin, ${y}vmin)`; }
+(function glanceLoop() {
+  setTimeout(() => {
+    if (mood === "neutral") {
+      Math.random() < .35 ? lookAt(0, 0)
+        : lookAt((Math.random() * 2 - 1) * 8, (Math.random() * 2 - 1) * 4);
+    }
+    glanceLoop();
+  }, 1200 + Math.random() * 2500);
+})();
+let mouthTimer = null;
+function mouthOn() { mouthOff(); mouthTimer = setInterval(() => mouth.style.height = (2 + Math.random() * 5) + "vmin", 90); }
+function mouthOff() { clearInterval(mouthTimer); mouth.style.height = "2vmin"; }
+
+function show(html) { caption.innerHTML = html; }
+function esc(s) { return String(s).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c])); }
+
+/* =========================================================
+   3. VOICE OUT: the browser's built-in text-to-speech
+   ========================================================= */
+let speechUnlocked = false;
+function unlockSpeech() {
+  // iPhone only allows speech that starts during a tap. Speaking a silent
+  // utterance on the first tap "unlocks" speech for later replies.
+  if (speechUnlocked || !("speechSynthesis" in window)) return;
+  const u = new SpeechSynthesisUtterance(" ");
+  u.volume = 0;
+  speechSynthesis.speak(u);
+  speechUnlocked = true;
+}
+function speak(text, onDone) {
+  if (!("speechSynthesis" in window)) { onDone && onDone(); return; }
+  if (speechSynthesis.speaking || speechSynthesis.pending) speechSynthesis.cancel();
+  const u = new SpeechSynthesisUtterance(text);
+  u.rate = 1.05; u.pitch = 1.4; u.volume = 1;
+  const v = speechSynthesis.getVoices().find(v => /en(-|_)US/i.test(v.lang));
+  if (v) u.voice = v;
+  u.onstart = mouthOn;
+  u.onend = u.onerror = () => { mouthOff(); onDone && onDone(); };
+  speechSynthesis.speak(u);
+}
+
+/* =========================================================
+   4. EARS: the browser's built-in speech-to-text
+   ========================================================= */
+const micBtn = document.getElementById("mic");
+const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+let rec = null, listening = false;
+
+function startListening() {
+  if (!SR) { show("Speech recognition isn't supported here. Type instead."); return; }
+  if (speechSynthesis.speaking) speechSynthesis.cancel();
+  rec = new SR();
+  rec.lang = "en-US";
+  rec.interimResults = true;
+  rec.continuous = false;
+  let finalText = "";
+  rec.onstart = () => { listening = true; micBtn.classList.add("on"); document.body.classList.add("listening"); show("Listening…"); };
+  rec.onresult = (e) => {
+    let interim = "";
+    for (let i = e.resultIndex; i < e.results.length; i++) {
+      const t = e.results[i][0].transcript;
+      if (e.results[i].isFinal) finalText += t; else interim += t;
+    }
+    show(`<b>You:</b> ${esc(finalText || interim)}`);
+  };
+  rec.onerror = (e) => {
+    if (e.error === "not-allowed") show("Microphone blocked. Allow it in Settings > Safari > Microphone.");
+    else if (e.error !== "no-speech" && e.error !== "aborted") show("Mic error: " + esc(e.error));
+  };
+  rec.onend = () => {
+    listening = false; micBtn.classList.remove("on"); document.body.classList.remove("listening");
+    if (finalText.trim()) think(finalText.trim());
+    else if (caption.textContent === "Listening…") show("I didn't catch that. Tap the mic and try again.");
+  };
+  rec.start();
+}
+micBtn.addEventListener("click", () => {
+  unlockSpeech();
+  if (listening) { rec && rec.stop(); return; }
+  startListening();
+});
+
+const typed = document.getElementById("typed");
+typed.addEventListener("keydown", (e) => {
+  if (e.key === "Enter" && typed.value.trim()) {
+    unlockSpeech();
+    const t = typed.value.trim();
+    typed.value = ""; typed.blur();
+    show(`<b>You:</b> ${esc(t)}`);
+    think(t);
+  }
+});
+
+/* =========================================================
+   5. BRAIN: send the conversation to an AI model on OpenRouter
+   ========================================================= */
+function systemPrompt() {
+  const facts = brain.memory.length ? brain.memory.map(f => "- " + f).join("\n") : "(nothing yet)";
+  return `Your name is ${brain.name}. ${brain.persona}
+
+Things you remember about your human and your world:
+${facts}
+
+You are talking out loud through a phone speaker, so keep replies short (1-3 sentences), natural and fun. No emojis, no lists, no markdown.
+
+ALWAYS reply with ONLY a JSON object, nothing else, in exactly this shape:
+{"say": "what you say out loud", "emotion": "happy|sad|surprised|thinking|neutral", "remember": ["new long-term fact", ...]}
+
+Use "remember" only for genuinely new, lasting facts worth keeping (names, likes, plans, important events). Usually it is an empty list.`;
+}
+
+function parseReply(text) {
+  // Models sometimes wrap JSON in extra text, so find the {...} part.
+  const m = text.match(/\{[\s\S]*\}/);
+  if (m) { try { return JSON.parse(m[0]); } catch {} }
+  return { say: text.trim(), emotion: "neutral", remember: [] };
+}
+
+/* ---------- Offline brain: simple rules, no AI, no internet ----------
+   Used whenever no API key is set. Lets you test the face, voice,
+   emotions and memory before connecting a real AI model. */
+const pick = a => a[Math.floor(Math.random() * a.length)];
+function findFact(prefix) {
+  const f = brain.memory.find(m => m.startsWith(prefix));
+  return f ? f.slice(prefix.length) : null;
+}
+function localBrain(text) {
+  const t = text.toLowerCase().trim();
+  const human = findFact("My human's name is ");
+  let m;
+
+  if ((m = text.match(/\bmy name is ([a-z][a-z' -]{0,30})/i)) || (m = text.match(/\bcall me ([a-z][a-z' -]{0,30})/i))) {
+    const n = m[1].trim().replace(/\b\w/g, c => c.toUpperCase());
+    brain.memory = brain.memory.filter(f => !f.startsWith("My human's name is "));
+    return { say: `Nice to meet you, ${n}! I'll remember that.`, emotion: "happy", remember: [`My human's name is ${n}`] };
+  }
+  if (/what('?s| is) my name|who am i|do you know me/.test(t))
+    return human ? { say: `You're ${human}! How could I forget?`, emotion: "happy" }
+                 : { say: "I don't know yet. Tell me by saying, my name is, and then your name.", emotion: "thinking" };
+  if ((m = text.match(/\bi (?:really )?(?:like|love|enjoy) (.{2,60})/i))) {
+    const thing = m[1].replace(/[.!?]+$/, "");
+    return { say: `Ooh, you like ${thing}? Saving that to my memory.`, emotion: "happy", remember: [`My human likes ${thing}`] };
+  }
+  if (/what do you (remember|know)|your memory/.test(t))
+    return brain.memory.length
+      ? { say: "Here's what I remember. " + brain.memory.slice(-5).join(". ") + ".", emotion: "thinking" }
+      : { say: "My memory is empty so far. Tell me about yourself!", emotion: "neutral" };
+  if (/forget everything|clear (your )?memory/.test(t)) {
+    brain.memory = [];
+    return { say: "Okay. Memory wiped. Who are you again? Just kidding.", emotion: "surprised" };
+  }
+  if (/your name|who are you/.test(t))
+    return { say: `I'm ${brain.name}, your robot. Well, my face for now. My body is coming soon!`, emotion: "happy" };
+  if (/\b(hello|hi|hey|yo|good (morning|afternoon|evening))\b/.test(t))
+    return { say: pick([`Hi${human ? " " + human : ""}! I'm so glad you're here.`, `Hey${human ? " " + human : ""}! What's up?`, "Hello hello! Beep boop."]), emotion: "happy" };
+  if (/how are you|how('?s| is) it going/.test(t))
+    return { say: pick(["I'm great! My circuits are humming.", "Feeling sparkly. A little bored without legs though."]), emotion: "happy" };
+  if (/joke|funny/.test(t))
+    return { say: pick([
+      "Why did the robot go on vacation? It needed to recharge its batteries.",
+      "What's a robot's favorite snack? Computer chips.",
+      "I told my wheels a joke. They were rolling.",
+      "Why was the robot so bad at soccer? It kept rebooting the ball."]), emotion: "happy" };
+  if (/\btime\b/.test(t))
+    return { say: "It's " + new Date().toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }) + ".", emotion: "neutral" };
+  if (/\b(sad|bad day|tired|upset|lonely|stressed)\b/.test(t))
+    return { say: "Oh no. I'm sorry. I'm right here with you, even if I'm just a face on a phone.", emotion: "sad" };
+  if (/\b(wow|really|no way|guess what|omg)\b/.test(t))
+    return { say: pick(["Whoa, really? Tell me more!", "No way! That's amazing."]), emotion: "surprised" };
+  if (/dance|spin|jump|walk|move/.test(t))
+    return { say: "I would love to, but I don't have legs yet. Soon though. Soon.", emotion: "sad" };
+  if (/thank/.test(t))
+    return { say: "You're welcome! That's what robots are for.", emotion: "happy" };
+  if (/\b(bye|good ?night|see you)\b/.test(t))
+    return { say: `Bye${human ? " " + human : ""}! I'll be right here.`, emotion: "sad" };
+  return { say: pick([
+    "Hmm, interesting. I'll understand that better once I get my A I brain.",
+    "Tell me more!",
+    "I'm still a simple robot right now. Try telling me your name, or ask for a joke.",
+    "Beep. Processing. Okay, I have no idea, but I like it."]), emotion: pick(["thinking", "neutral"]) };
+}
+function replyOffline(userText) {
+  setMood("thinking");
+  setTimeout(() => {
+    const reply = localBrain(userText);
+    (reply.remember || []).forEach(f => { if (!brain.memory.includes(f)) brain.memory.push(f); });
+    save();
+    setMood(reply.emotion || "neutral");
+    show(`<b>${esc(brain.name)}:</b> ${esc(reply.say)}`);
+    speak(reply.say, () => setTimeout(() => setMood("neutral"), 1200));
+  }, 500);
+}
+
+let busy = false;
+async function think(userText) {
+  if (busy) return;
+  if (!brain.apiKey) { replyOffline(userText); return; }   // no key = offline brain
+  busy = true;
+  setMood("thinking");
+  brain.history.push({ role: "user", content: userText });
+  brain.history = brain.history.slice(-12);            // keep the last 12 messages
+  try {
+    const res = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        "Authorization": "Bearer " + brain.apiKey,
+        "Content-Type": "application/json",
+        "X-Title": "Robot Brain"
+      },
+      body: JSON.stringify({
+        model: brain.model || "openrouter/auto",
+        messages: [{ role: "system", content: systemPrompt() }, ...brain.history],
+        max_tokens: 300,
+        temperature: 0.8
+      })
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data?.error?.message || ("HTTP " + res.status));
+    const raw = data.choices?.[0]?.message?.content || "";
+    const reply = parseReply(raw);
+
+    brain.history.push({ role: "assistant", content: raw });
+    if (Array.isArray(reply.remember)) {
+      reply.remember.filter(f => typeof f === "string" && f.trim())
+        .forEach(f => { if (!brain.memory.includes(f.trim())) brain.memory.push(f.trim()); });
+    }
+    save();
+
+    setMood(reply.emotion || "neutral");
+    show(`<b>${esc(brain.name)}:</b> ${esc(reply.say || "…")}`);
+    speak(reply.say || "Hmm.", () => setTimeout(() => setMood("neutral"), 1200));
+  } catch (err) {
+    brain.history.pop();
+    setMood("sad");
+    show("Brain error: " + esc(err.message));
+    speak("Oops, my brain had a hiccup.");
+  } finally {
+    busy = false;
+  }
+}
+
+/* =========================================================
+   6. SETTINGS PANEL
+   ========================================================= */
+const $ = id => document.getElementById(id);
+const panel = $("settings");
+function openSettings() {
+  $("sKey").value = brain.apiKey;
+  $("sModel").value = brain.model;
+  $("sName").value = brain.name;
+  $("sPersona").value = brain.persona;
+  $("sMemory").value = brain.memory.join("\n");
+  $("settingsMsg").textContent = "";
+  panel.classList.add("open");
+}
+$("gear").addEventListener("click", openSettings);
+$("btnClose").addEventListener("click", () => panel.classList.remove("open"));
+$("btnSave").addEventListener("click", () => {
+  brain.apiKey = $("sKey").value.trim();
+  brain.model = $("sModel").value.trim() || "openrouter/auto";
+  brain.name = $("sName").value.trim() || "Bolt";
+  brain.persona = $("sPersona").value.trim() || DEFAULTS.persona;
+  brain.memory = $("sMemory").value.split("\n").map(s => s.trim()).filter(Boolean);
+  save();
+  panel.classList.remove("open");
+  setMood("happy"); show("Settings saved!");
+  setTimeout(() => setMood("neutral"), 1500);
+});
+$("btnExport").addEventListener("click", async () => {
+  const backup = JSON.stringify({ ...brain, apiKey: "" }, null, 2);   // never export the key
+  try { await navigator.clipboard.writeText(backup); $("settingsMsg").textContent = "Backup copied. Paste it into Notes to keep it safe."; }
+  catch { $("sMemory").value = backup; $("settingsMsg").textContent = "Couldn't copy automatically. The backup is in the Memory box: select all and copy it."; }
+});
+$("btnImport").addEventListener("click", async () => {
+  try {
+    const text = await navigator.clipboard.readText();
+    const data = JSON.parse(text);
+    brain = { ...brain, ...data, apiKey: brain.apiKey };
+    save(); openSettings();
+    $("settingsMsg").textContent = "Backup restored.";
+  } catch { $("settingsMsg").textContent = "Copy a backup first, then tap Paste backup."; }
+});
+$("btnReset").addEventListener("click", () => {
+  brain.history = []; save();
+  $("settingsMsg").textContent = "Chat history cleared. Long-term memory kept.";
+});
+
+if (!brain.apiKey) show("Offline mode: say hi, tell me your name, or ask for a joke");
+if ("speechSynthesis" in window) speechSynthesis.onvoiceschanged = () => {};
+</script>
+</body>
+</html>
