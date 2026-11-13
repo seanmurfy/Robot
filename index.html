@@ -417,6 +417,29 @@
   .dash-note { color: var(--muted); font-size: 12px; margin-top: 10px; line-height: 1.4; }
   #dashSettings { margin-top: 16px; min-height: 44px; padding: 0 16px; border-radius: 10px; border: none;
                   background: #22323a; color: var(--text); font-size: 15px; font-family: inherit; cursor: pointer; }
+  /* Notes: what Winslow puts on screen instead of reading out (lists, steps, code, numbers, links) */
+  .note { border: 1px solid #1d2a31; border-radius: 14px; padding: 12px 14px 10px; margin-bottom: 12px; background: #0c1418; }
+  .note.new { animation: evIn 1s ease-out; }
+  .note-head { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
+  .note-head h3 { flex: 1; min-width: 0; font-size: 16px; font-weight: 600; color: var(--text); overflow-wrap: anywhere; }
+  .note-head time { color: var(--muted); font-size: 12px; white-space: nowrap; }
+  .note-copy { min-height: 34px; padding: 0 12px; border-radius: 17px; border: 1px solid #22323a; background: transparent;
+               color: var(--muted); font-size: 13px; font-family: inherit; cursor: pointer; }
+  .note-copy:active { background: rgba(124,196,255,.15); }
+  .md { font-size: 15px; line-height: 1.5; color: var(--text); overflow-wrap: anywhere; }
+  .md > * + * { margin-top: 8px; }
+  .md h4 { font-size: 15px; font-weight: 600; color: var(--eye); margin-top: 12px; }
+  .md ul, .md ol { padding-left: 22px; }
+  .md li + li { margin-top: 4px; }
+  .md a { color: var(--accent); }
+  .md code { font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 13px; background: #1a262d; padding: 1px 5px; border-radius: 5px; }
+  .md pre { background: #071014; border: 1px solid #1a262d; border-radius: 10px; padding: 10px 12px; overflow-x: auto; }
+  .md pre code { background: none; padding: 0; white-space: pre; }
+  .md .tbl { overflow-x: auto; }
+  .md table { border-collapse: collapse; font-size: 14px; min-width: 100%; }
+  .md th, .md td { border-bottom: 1px solid #1d2a31; padding: 6px 8px; text-align: left; vertical-align: top; }
+  .md th { color: var(--muted); font-weight: 500; }
+  .note .ev-links { margin-top: 8px; border-top: 1px solid #172229; padding-top: 6px; }
   @media (prefers-reduced-motion: reduce) { #face, #dashSheet { transition: none; } }
 
   /* ---------- Settings ---------- */
@@ -520,12 +543,16 @@
     <div id="dashSheet">
       <div id="dashGrip" aria-hidden="true"><span></span></div>
       <div id="dashTabs" role="tablist" aria-label="Dashboard sections">
+        <button role="tab" id="tab-notes" data-tab="notes" aria-controls="p-notes">Notes</button>
         <button role="tab" id="tab-logs" data-tab="logs" aria-controls="p-logs">Logs</button>
         <button role="tab" id="tab-memory" data-tab="memory" aria-controls="p-memory">Memory</button>
         <button role="tab" id="tab-senses" data-tab="senses" aria-controls="p-senses">Senses</button>
         <button role="tab" id="tab-status" data-tab="status" aria-controls="p-status">Status</button>
       </div>
       <div id="dashBody">
+        <section class="dpanel" id="p-notes" role="tabpanel" aria-labelledby="tab-notes">
+          <div id="noteList"></div>
+        </section>
         <section class="dpanel" id="p-logs" role="tabpanel" aria-labelledby="tab-logs">
           <div class="chips" id="logFilters" role="group" aria-label="Show only"></div>
           <div id="logList"></div>
@@ -657,7 +684,7 @@
    1. STORAGE: everything the robot knows lives in one object,
       saved in this browser's localStorage (on the phone).
    ========================================================= */
-const APP_VERSION = "v5.3";
+const APP_VERSION = "v5.5";
 // iPhone bug: after rotating, fixed buttons can be drawn in one place but tappable in another.
 // Snapping the page back to the top re-syncs them.
 function resyncLayout() {
@@ -684,6 +711,7 @@ const DEFAULTS = {
     "Together: formal British manners, warmth beneath the polish, wit that is dry and never cruel. You address your human as 'sir'. You speak aloud in one to three short, measured sentences, with no exclamation marks and no gushing. Your body is still under construction, a fact you bear with dignified patience.",
   memory: [],
   history: [],
+  notes: [],         // things Winslow put on screen rather than read out: [{ t, title, text, links }], newest last, max 20
   voiceName: "",     // "" = automatic pick (British English first)
   pitch: 0.9,
   rate: 1.0,
@@ -1187,7 +1215,7 @@ In "say", give the answer itself in plain spoken words. Never read out sources, 
 
 Address your human as "${addr()}". Use that wherever your character notes say "sir", and adjust pronouns to suit it.
 
-You are speaking out loud through a phone speaker, so keep every reply short enough to say comfortably: one to three short, measured sentences. Stay composed. No emojis, no lists, no markdown, no exclamation marks. Only rate something out of ten when asked, or unprompted rarely (about one reply in ten at most, never two replies running). Write ratings in words, like "7 out of 10", never "7/10".
+You are speaking out loud through a phone speaker, so keep every reply short enough to say comfortably: one to three short, measured sentences. Stay composed. In "say": no emojis, no lists, no markdown, no exclamation marks (anything that needs those goes in "display", below). Only rate something out of ten when asked, or unprompted rarely (about one reply in ten at most, never two replies running). Write ratings in words, like "7 out of 10", never "7/10".
 Your body is not built yet: you are a face on a phone. Only talk about moving when your human asks you to, or when it truly fits the moment.
 Your face is subtle. Use "neutral" most of the time, "happy" for quiet warmth, and "excited" only when you are genuinely pleased.
 
@@ -1195,12 +1223,14 @@ Sometimes your human shows you a photo from your camera (your eyes). React to wh
 When a photo comes with a message, answer what your human actually said. Only describe the scene if they ask about it or something new shows up. Never repeat a description, rating or line you already said earlier in this chat: say something new and keep the conversation moving.
 
 ALWAYS reply with ONLY a JSON object, nothing else, in exactly this shape:
-{"say": "what you say out loud", "emotion": "happy|excited|sad|surprised|thinking|sleepy|neutral", "remember": ["new long-term fact", ...], "action": null, "dashboard_tab": null}
+{"say": "what you say out loud", "emotion": "happy|excited|sad|surprised|thinking|sleepy|neutral", "remember": ["new long-term fact", ...], "action": null, "dashboard_tab": null, "display": null}
+
+"display" puts something on your human's screen instead of reading it out. Use it when the answer would not make sense spoken: lists, steps, recipes, directions, code, tables or comparisons, addresses, phone numbers, long numbers, spellings, links, or anything longer than three sentences. Then set "display" to {"title": "a short title", "text": "the full content"}, written in simple markdown (## headings, - bullets, 1. numbered steps, **bold**, \`code\`, code blocks, | tables |, [links](https://...)), and keep "say" to one short sentence that gives the gist and mentions it is on screen, such as "I've put the recipe on screen, sir. Twenty minutes, start to finish." Never read the displayed content out. For ordinary conversation, leave "display" null (the usual case).
 
 Use "remember" only for genuinely new, lasting facts worth keeping (names, likes, plans, important events). Usually it is an empty list.
 
 Actions you can take. Put one in "action", or leave it null (the usual case):
-- "show_dashboard": open your brain dashboard when the user asks to see your brain, dashboard, logs, memory or status. If they asked for one part, set "dashboard_tab" to "logs", "memory", "senses" or "status"; otherwise leave it null. Say a short line as you open it.${dashIsOpen() ? `
+- "show_dashboard": open your brain dashboard when the user asks to see your brain, dashboard, logs, memory or status. If they asked for one part, set "dashboard_tab" to "notes" (things you put on screen), "logs", "memory", "senses" or "status"; otherwise leave it null. Say a short line as you open it.${dashIsOpen() ? `
 Your brain dashboard is open right now, on the ${dashTab} tab.` : ""}`;
 }
 
@@ -1215,7 +1245,30 @@ function nowText() {
   return `${date}, ${time} (${tz ? tz + ", " : ""}${utc})`;
 }
 const searchOn = () => !!brain.apiKey && brain.webSearch !== false && !searchBroken;
-let searchBroken = false;                                // set for this session if the model rejects the tool
+// Questions that only today's facts can answer: these must be backed by a search (see think()).
+// Only questions and requests count ("lovely weather today" is just conversation).
+const ASKING_RE = /\?\s*$|^(?:(?:hey|ok|okay|so|and|um|well|right|please|winslow),?\s+)*(?:what|what's|whats|when|who|who's|where|how|is|are|was|were|did|does|do|will|can|could|any|tell|check|give|find|look up|search|let me know)\b/i;
+const MUST_SEARCH_RE = /\b(scores?|fixtures?|kick.?off|who won|who'?s winning|weather|forecast|(?:the|latest|today'?s|any) news|headlines|stock|share price|price of|exchange rate|election|traffic|opening hours|open (?:today|tonight|now|until|on)|release date|next (?:game|match|race|fight|episode|launch)|(?:playing|on) (?:tonight|today|tomorrow))\b/i;
+// Can the chosen model take images? OpenRouter's public model list says (input_modalities).
+// Read once per visit; unknown models are allowed to try.
+let visionCache = null;
+async function modelSees(model) {
+  if (!visionCache) {
+    visionCache = {};
+    try {
+      const ctl = new AbortController(), tm = setTimeout(() => ctl.abort(), 5000);
+      const list = (await (await fetch("https://openrouter.ai/api/v1/models", { signal: ctl.signal })).json())?.data || [];
+      clearTimeout(tm);
+      for (const m of list) {
+        const mods = m?.architecture?.input_modalities, mod = m?.architecture?.modality;
+        if (Array.isArray(mods)) visionCache[m.id] = mods.includes("image");
+        else if (typeof mod === "string") visionCache[m.id] = /image/.test(mod.split("->")[0]);
+      }
+    } catch { visionCache = null; return true; }       // list unavailable: try anyway, check again next time
+  }
+  return visionCache[model] ?? true;
+}
+let searchBroken = false;                               // set for this session if the model rejects the tool
 // Things that are probably about the present: the "Consulting the wires…" caption shows at once for these.
 const TIMELY_RE = /\b(today|tonight|tomorrow|yesterday|this (week|weekend|morning|evening|year|season)|next|latest|current(ly)?|now|recent(ly)?|score|scores|fixture|fixtures|schedule|kick.?off|match|game|playing|weather|forecast|rain|temperature|news|headlines|price|prices|cost|stock|open|opening|closing|hours|release|released|who won|winning|election|traffic)\b/i;
 
@@ -1393,10 +1446,10 @@ function localReply(text) {
   // Brain dashboard: "show me your brain", "open your dashboard", "show your logs",
   // "what's in your memory", "status report"
   if (!/\b(close|hide|shut|exit)\b/.test(t) &&
-      (/\b(show|open|see|pull up|bring up|let me see)\b.*\b(brain|dashboard|logs?|memory|memories|status|senses)\b/.test(t) ||
-       /what'?s in (your|ur) (memory|head|brain)|status report|\bdashboard\b/.test(t))) {
+      (/\b(show|open|see|pull up|bring up|let me see)\b.*\b(brain|dashboard|logs?|memory|memories|status|senses|notes?)\b/.test(t) ||
+       /what'?s in (your|ur) (memory|head|brain)|status report|\bdashboard\b|\bshow (me )?(that|it) again\b/.test(t))) {
     const tab = /\blogs?\b/.test(t) ? "logs" : /memor/.test(t) ? "memory" : /\bsenses?\b/.test(t) ? "senses" :
-                /\bstatus\b/.test(t) ? "status" : null;
+                /\bstatus\b/.test(t) ? "status" : /\bnotes?\b|\bagain\b/.test(t) ? "notes" : null;
     return { say: pick([`Certainly, ${a}. Do mind the cobwebs.`, `My brain, ${a}, laid bare. Try not to judge.`,
                         `Right away, ${a}. Everything I know, more or less.`,
                         tab === "status" ? `Status report coming up, ${a}.` : `Opening the dashboard, ${a}.`]),
@@ -1491,7 +1544,7 @@ function replyOffline(userText) {
 }
 
 // Phrases that mean "use your camera"
-const LOOK_RE = /\b(what (do|can) you see|look at (this|that|me|my)|take a look|have a look|what am i holding|can you see (this|that|me|my))\b/i;
+const LOOK_RE = /\b(what (do|can) you see|look at (this|that|me|my)|take a look|have a look|what am i (holding|wearing|doing)|can you see (this|that|me|my)|what do i look like|how do i look|do i look|describe (me|this|what you see)|what(?:'s| is) (?:in front of|behind) (?:me|you)|how(?:'s| is| does) my (?:hair|outfit|shirt|face|beard|room))\b/i;
 // With the preview open, words like these mean "this is about what's in front of you".
 const VISUAL_RE = /\b(see|seeing|look|looks|looking|this|these|those|here|hold|holding|wearing|wear|colou?rs?|show|showing|picture|photo|camera|read|count|how many|who is|who's|what is this|what's this|now)\b/i;
 let photoSentThisPreview = false;                       // reset each time the preview opens
@@ -1529,13 +1582,32 @@ async function think(userText, image) {
     }
   }
   if (!brain.apiKey) { replyOffline(userText); return; }   // no key = offline brain
+  // A model that can't see images would quietly ignore the photo and invent a description.
+  // Check first, and say so instead.
+  if (image && !(await modelSees(brain.model || "openrouter/auto"))) {
+    logEvent("error", `Vision: ${brain.model} can't take images, so the photo wasn't sent`);
+    setMood("sad");
+    show(`This AI model (${esc(brain.model)}) can't see images. Choose a vision model in settings, such as a GPT-4o, Gemini or Claude model.`);
+    speak(`I'm afraid my eyes don't work with this AI model, ${addr()}. A model that can see, chosen in settings, will put that right.`,
+          () => setTimeout(() => setMood("neutral"), 1200));
+    return;
+  }
   busy = true;
   if (image) preview.classList.add("sending");          // bubble dims and ignores taps until the reply arrives
   setMood("thinking");
   // History only ever gets text: images are sent once and never stored.
   brain.history.push({ role: "user", content: image ? userText + " [showed Winslow a photo]" : userText });
   brain.history = brain.history.slice(-12);            // keep the last 12 messages
-  const messages = [{ role: "system", content: systemPrompt() }, ...brain.history];
+  // Tell the model plainly whether it can see anything this turn, so it never describes the human
+  // or the room from an older photo (or from nothing at all).
+  const eyes = image
+    ? `\n\nEYES: a photo from your camera is attached to your human's latest message. Describe only what is actually in it; if something is unclear, say so rather than guess.`
+    : `\n\nEYES: no photo is attached to the latest message, so you cannot see anything right now. If your human asks how they look, what they are wearing or holding, or anything about what is in front of you, do not guess or describe from earlier photos: say you would need a look, and suggest they say "look at me" or open your camera.`;
+  const sys = (noSearch, extra = "") => ({ role: "system", content: systemPrompt(noSearch) + eyes + extra });
+  // Questions that can only be answered from today's facts. If the model answers one without
+  // searching, it is asked again with a search; if that still finds nothing, he says he can't confirm.
+  const mustSearch = MUST_SEARCH_RE.test(userText) && ASKING_RE.test(userText.trim()) && !(lastSearch && Date.now() - lastSearch.t < SEARCH_CACHE_MS);
+  const messages = [sys(false), ...brain.history];
   if (image) messages[messages.length - 1] = { role: "user", content: [
     { type: "text", text: userText },
     { type: "image_url", image_url: { url: image } }
@@ -1557,7 +1629,7 @@ async function think(userText, image) {
     body: JSON.stringify({
       model: brain.model || "openrouter/auto",
       messages,
-      max_tokens: 300,
+      max_tokens: 1000,                                  // room for an on-screen "display" (lists, recipes, code)
       temperature: 0.8,
       frequency_penalty: 0.5,                            // discourage repeating the same lines
       presence_penalty: 0.3,
@@ -1568,13 +1640,14 @@ async function think(userText, image) {
   });
   const post = async withSearch => { const r = await call(withSearch); return { res: r, data: await r.json().catch(() => ({})) }; };
   try {
-    let { res, data } = await post(useSearch);
+    let { res, data } = await post(useSearch), toolsFailed = false;
     if (!res.ok && useSearch && ![401, 402, 403, 429].includes(res.status)) {
+      toolsFailed = true;
       // The model or account couldn't use search: answer without it, and don't guess current facts.
       const why = data?.error?.message || ("HTTP " + res.status);
       logEvent("error", "Web search unavailable: " + why);
       if (/tool|function|web_search|not support/i.test(why)) searchBroken = true;   // skip it for the rest of this visit
-      messages[0] = { role: "system", content: systemPrompt(true) };
+      messages[0] = sys(true);
       ({ res, data } = await post(false));
     }
     if (!res.ok) throw new Error(data?.error?.message || ("HTTP " + res.status));
@@ -1584,7 +1657,18 @@ async function think(userText, image) {
     // A search that found nothing gets exactly one more try, with a nudge to rephrase.
     if (useSearch && si.ran && !si.sources.length) {
       logSearch(si, userText, "returned no sources; trying once more");
-      messages[0] = { role: "system", content: systemPrompt() + `\n\nYour web search for this message${si.queries.length ? ` ("${si.queries[0]}")` : ""} returned no results. Search once more with a different, more specific, self-contained query.` };
+      messages[0] = sys(false, `\n\nYour web search for this message${si.queries.length ? ` ("${si.queries[0]}")` : ""} returned no results. Search once more with a different, more specific, self-contained query.`);
+      const retry = await post(true);
+      if (retry.res.ok) {
+        data = retry.data; replyCost = (Number.isFinite(replyCost) ? replyCost : 0) + (Number(data.usage?.cost) || 0);
+        si = searchInfo(data);
+        if (si.ran) countSearch(si);
+      }
+    } else if (useSearch && !toolsFailed && !si.ran && mustSearch) {
+      // It answered a current-facts question from memory. Ask once more, insisting on a search.
+      logEvent("search", `Answered "${userText}" without searching; asking again with a search`);
+      setMood("thinking"); show(`<b>${esc(brain.name)}:</b> Consulting the wires…`);
+      messages[0] = sys(false, `\n\nThis question needs current facts and you did not search. Use your web search tool now, with a self-contained query, and answer only from what it finds.`);
       const retry = await post(true);
       if (retry.res.ok) {
         data = retry.data; replyCost = (Number.isFinite(replyCost) ? replyCost : 0) + (Number(data.usage?.cost) || 0);
@@ -1596,6 +1680,8 @@ async function think(userText, image) {
     const msg = data.choices?.[0]?.message || {};
     const raw = Array.isArray(msg.content) ? msg.content.map(p => p?.text || "").join("") : String(msg.content || "");
     const reply = parseReply(raw);
+    // Anything that won't work out loud goes on screen (the dashboard's Notes tab); he says just the gist.
+    reply.display = displayFrom(reply);
     // Spoken text: no links or citation marks, and "9 out of 10" rather than "9/10".
     reply.say = cleanSay(reply.say).replace(/(?<![\d.\/])(\d+(?:\.\d+)?)\s*\/\s*(10|100)\b(?!\/)/g, "$1 out of $2");
     // Log the search with its sources (shown in the dashboard, never spoken). If it found nothing,
@@ -1607,12 +1693,22 @@ async function think(userText, image) {
       } else {
         logSearch(si, userText, "returned no sources, so Winslow couldn't confirm the answer");
         reply.say = `I'm afraid I couldn't confirm that at present, ${addr()}. My search came back empty.`;
-        reply.emotion = "neutral"; reply.action = null;
+        reply.emotion = "neutral"; reply.action = null; reply.display = null;
       }
+    } else if (mustSearch) {
+      // A current-facts question with no search behind the answer (search off, unavailable, or skipped
+      // twice): whatever the model said came from memory, so he doesn't say it.
+      logEvent("search", `No search ran for "${userText}", so Winslow didn't answer from memory`);
+      reply.say = `I'm afraid I can't confirm that at present, ${addr()}. ` +
+        (!searchOn() ? (brain.webSearch ? "My web search isn't available with this AI model." : "Web search is switched off in my settings.") : "My search didn't come through.");
+      reply.emotion = "neutral"; reply.action = null; reply.display = null;
     }
+    if (reply.display) addNote(reply.display, useSearch && si.ran ? si.sources : []);
 
-    // History keeps just the clean reply (no citations), so later turns stay small.
-    brain.history.push({ role: "assistant", content: JSON.stringify({ say: reply.say, emotion: reply.emotion || "neutral" }) });
+    // History keeps just the clean reply (no citations), so later turns stay small. A displayed
+    // note goes in shortened, so follow-ups ("what was step three?") still have it.
+    brain.history.push({ role: "assistant", content: JSON.stringify({ say: reply.say, emotion: reply.emotion || "neutral",
+      ...(reply.display ? { display: { title: reply.display.title, text: reply.display.text.slice(0, 1200) } } : {}) }) });
     if (Array.isArray(reply.remember)) {
       reply.remember.filter(f => typeof f === "string" && f.trim()).forEach(f => rememberFact(f.trim()));
     }
@@ -2353,7 +2449,7 @@ if (window.visualViewport) {
        AI's "show_dashboard" action, or the offline brain. Tabs: Logs,
        Memory, Senses, Status. Never shows the API key.
    ========================================================= */
-const DASH_TABS = ["logs", "memory", "senses", "status"];
+const DASH_TABS = ["notes", "logs", "memory", "senses", "status"];
 const LOG_TYPES = { heard: "Heard", said: "Said", saw: "Saw", memory: "Memory", search: "Search", state: "State", error: "Error" };
 const dashSay = $("dashSay"), dashBody = $("dashBody"), logList = $("logList"), factList = $("factList");
 const senseVideo = $("senseVideo"), senseCamMsg = $("senseCamMsg"), dashMic = $("dashMic");
@@ -2361,7 +2457,8 @@ let logFilter = "all", dashTicker = null, sensesOpening = false;
 
 function dashIsOpen() { return document.body.classList.contains("dash-open"); }
 function doAction(reply) {
-  if (reply && reply.action === "show_dashboard")
+  if (reply && reply.display) openDashboard("notes");
+  else if (reply && reply.action === "show_dashboard")
     openDashboard(DASH_TABS.includes(reply.dashboard_tab) ? reply.dashboard_tab : null);
 }
 function openDashboard(tab) {
@@ -2385,9 +2482,103 @@ function dashSwitch(tab) {
   document.querySelectorAll(".dpanel").forEach(p => p.classList.toggle("on", p.id === "p-" + tab));
   dashBody.scrollTop = 0;
   if (tab === "senses") sensesOn(); else sensesOff();
+  if (tab === "notes") renderNotes();
   if (tab === "logs") renderLogs();
   if (tab === "memory") renderMemory();
   dashTick();
+}
+
+/* ----- Notes: replies that don't work as speech (lists, steps, code, tables, numbers, links).
+   The AI sends them in "display"; Winslow says the gist and the full text shows here. ----- */
+const NOTE_MAX = 20;
+// The reply's on-screen part, or null. If the model forgot "display" but "say" is plainly not
+// speakable (a list, code, a table, or very long), the text moves on screen and he says the first line.
+function displayFrom(reply) {
+  const d = reply.display;
+  if (d && typeof d === "object" && typeof d.text === "string" && d.text.trim())
+    return { title: String(d.title || "").trim().slice(0, 80), text: d.text.trim().slice(0, 8000) };
+  if (typeof d === "string" && d.trim()) return { title: "", text: d.trim().slice(0, 8000) };
+  const s = String(reply.say || "").trim();
+  if (!(/\n\s*([-*•]|\d+[.)])\s|```|\n\s*\||\n\s*#+\s/.test(s) || s.length > 450)) return null;
+  const first = cleanSay(s.split("\n")[0]).match(/^.*?[.?!](?=\s|$)/);
+  reply.say = (first && first[0].length <= 200 && !/:$/.test(first[0]) ? first[0] + " " : "") +
+    `I've put the rest on screen, ${addr()}.`;
+  return { title: "", text: s.slice(0, 8000) };
+}
+function addNote(d, sources) {
+  brain.notes = Array.isArray(brain.notes) ? brain.notes : [];
+  brain.notes.push({ t: Date.now(), title: d.title, text: d.text,
+    links: (sources || []).slice(0, 5).map(({ url, title }) => ({ url, title })) });
+  brain.notes = brain.notes.slice(-NOTE_MAX);
+  save();
+  logEvent("state", "Put on screen: " + (d.title || d.text.replace(/\s+/g, " ").slice(0, 60)));
+  if (dashIsOpen() && dashTab === "notes") renderNotes();
+}
+function renderNotes() {
+  const notes = Array.isArray(brain.notes) ? brain.notes : [];
+  $("noteList").innerHTML = notes.length ? notes.map((n, i) => {
+    const d = new Date(n.t), today = d.toDateString() === new Date().toDateString();
+    const time = (today ? "" : d.toLocaleDateString([], { month: "short", day: "numeric" }) + " ") +
+                 d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+    return `<article class="note${Date.now() - n.t < 4000 ? " new" : ""}"><div class="note-head">` +
+      `<h3>${esc(n.title || "Note")}</h3><time>${esc(time)}</time>` +
+      `<button class="note-copy" data-i="${i}" aria-label="Copy this note">Copy</button></div>` +
+      `<div class="md">${mdHtml(n.text)}</div>${linksHtml(n)}</article>`;
+  }).reverse().join("")
+    : `<p class="dash-empty">Nothing on screen yet. Ask for a list, a recipe or directions, and it will appear here.</p>`;
+}
+$("noteList").addEventListener("click", async e => {
+  const b = e.target.closest(".note-copy"); if (!b) return;
+  const n = brain.notes[+b.dataset.i]; if (!n) return;
+  try { await navigator.clipboard.writeText((n.title ? n.title + "\n\n" : "") + n.text); b.textContent = "Copied"; }
+  catch { b.textContent = "Couldn't copy"; }
+  setTimeout(() => b.textContent = "Copy", 1500);
+});
+// A small, safe markdown subset: everything is escaped first, then headings, lists, tables,
+// code blocks, **bold**, *italic*, `code` and http(s) links are added back.
+function mdInline(s) {
+  return esc(s)
+    .replace(/`([^`]+)`/g, "<code>$1</code>")
+    .replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g, '<a href="$2" target="_blank" rel="noopener noreferrer">$1</a>')
+    .replace(/(^|\s)(https?:\/\/[^\s<]+[^\s<.,;:!?)])/g, '$1<a href="$2" target="_blank" rel="noopener noreferrer">$2</a>')
+    .replace(/\*\*([^*]+)\*\*|__([^_]+)__/g, (_, a, b) => `<b>${a || b}</b>`)
+    .replace(/(^|[^*\w])\*([^*\s][^*]*?)\*(?!\*)/g, "$1<i>$2</i>");
+}
+function mdHtml(src) {
+  const lines = String(src || "").replace(/\r/g, "").split("\n"), out = [];
+  const UL = /^\s*[-*•]\s+(.*)$/, OL = /^\s*(\d+)[.)]\s+(.*)$/, TR = /^\s*\|/;
+  for (let i = 0; i < lines.length;) {
+    const line = lines[i];
+    if (/^\s*```/.test(line)) {
+      const code = []; i++;
+      while (i < lines.length && !/^\s*```/.test(lines[i])) code.push(lines[i++]);
+      i++; out.push(`<pre><code>${esc(code.join("\n"))}</code></pre>`);
+    } else if (/^\s*#{1,6}\s+/.test(line)) {
+      out.push(`<h4>${mdInline(line.replace(/^\s*#+\s+/, ""))}</h4>`); i++;
+    } else if (UL.test(line)) {
+      const items = []; while (i < lines.length && UL.test(lines[i])) items.push(lines[i++].match(UL)[1]);
+      out.push(`<ul>${items.map(t => `<li>${mdInline(t)}</li>`).join("")}</ul>`);
+    } else if (OL.test(line)) {
+      const start = +line.match(OL)[1], items = [];
+      while (i < lines.length && OL.test(lines[i])) items.push(lines[i++].match(OL)[2]);
+      out.push(`<ol${start !== 1 ? ` start="${start}"` : ""}>${items.map(t => `<li>${mdInline(t)}</li>`).join("")}</ol>`);
+    } else if (TR.test(line)) {
+      const rows = [];
+      while (i < lines.length && TR.test(lines[i])) {
+        const r = lines[i++].trim().replace(/^\||\|$/g, "").split("|").map(c => c.trim());
+        if (!r.every(c => /^:?-{2,}:?$/.test(c))) rows.push(r);      // skip the |---| separator row
+      }
+      out.push(`<div class="tbl"><table>${rows.map((r, k) => `<tr>${r.map(c => k ? `<td>${mdInline(c)}</td>` : `<th>${mdInline(c)}</th>`).join("")}</tr>`).join("")}</table></div>`);
+    } else if (!line.trim()) {
+      i++;
+    } else {
+      const para = [];
+      while (i < lines.length && lines[i].trim() && !/^\s*(```|#{1,6}\s)/.test(lines[i]) && !UL.test(lines[i]) && !OL.test(lines[i]) && !TR.test(lines[i]))
+        para.push(lines[i++]);
+      out.push(`<p>${para.map(mdInline).join("<br>")}</p>`);
+    }
+  }
+  return out.join("");
 }
 function dashTick() {
   if (!dashIsOpen()) return;
@@ -2584,9 +2775,9 @@ function dashCommand(text) {
     say(pick(dir === "up" || dir === "top" ? ["Up we go.", "There."] : ["Down we go.", "There.", "Scrolling."]));
     return true;
   }
-  if ((m = t.match(/\b(?:show|open|go to|switch to|see|view|back to)\b.*?\b(logs?|memor(?:y|ies)|senses|status)\b/) ||
-           t.match(/^(?:the |your )?(logs?|memor(?:y|ies)|senses|status)(?: tab)?$/))) {
-    const tab = /^log/.test(m[1]) ? "logs" : /^memor/.test(m[1]) ? "memory" : m[1];
+  if ((m = t.match(/\b(?:show|open|go to|switch to|see|view|back to)\b.*?\b(notes?|logs?|memor(?:y|ies)|senses|status)\b/) ||
+           t.match(/^(?:the |your )?(notes?|logs?|memor(?:y|ies)|senses|status)(?: tab)?$/))) {
+    const tab = /^log/.test(m[1]) ? "logs" : /^memor/.test(m[1]) ? "memory" : /^note/.test(m[1]) ? "notes" : m[1];
     dashSwitch(tab);
     say(pick([`${tab.charAt(0).toUpperCase() + tab.slice(1)}, ${a}.`, `Here you are, ${a}.`, "Certainly."]));
     return true;
