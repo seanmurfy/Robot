@@ -316,6 +316,104 @@
   }
   body.debug #version { display: block; }
 
+  /* ---------- Brain dashboard (voice-opened overlay) ----------
+     The sheet slides up; Winslow's face shrinks into the top-left corner and stays alive there.
+     z-index: face 59 < dashboard 60 < settings 100. The dashboard leaves the face's corner
+     uncovered (pointer-events: none there), so tapping the little face still talks. */
+  :root { --dash-head: calc(15vmin + 30px); }
+  #face { transition: transform .45s cubic-bezier(.3,.9,.3,1); }
+  body.dash-open #face {
+    inset: 0 !important; z-index: 59; transform-origin: 0 0;
+    transform: translate(calc(env(safe-area-inset-left) + 20px + 8.6vmin - 16vw),
+                         calc(env(safe-area-inset-top) + 16px + 7.5vmin - 16vh)) scale(.32);
+  }
+  body.dash-open #speech { display: none; }
+  body.dash-open.saying #mouth { opacity: .85; }        /* the little mouth moves while he talks */
+  body.dash-open #caption, body.dash-open #hint, body.dash-open #preview { visibility: hidden; }
+  #dash { position: fixed; inset: 0; z-index: 60; pointer-events: none; visibility: hidden; transition: visibility 0s .45s; }
+  body.dash-open #dash { visibility: visible; transition: none; }
+  #dashHead {
+    position: absolute; top: env(safe-area-inset-top); height: var(--dash-head);
+    left: calc(env(safe-area-inset-left) + 32px + 17.3vmin); right: calc(env(safe-area-inset-right) + 8px);
+    display: flex; align-items: center; gap: 4px; pointer-events: auto;
+    opacity: 0; transition: opacity .3s;
+  }
+  body.dash-open #dashHead { opacity: 1; transition-delay: .15s; }
+  #dashSay { flex: 1; min-width: 0; font-size: 14px; line-height: 1.35; color: var(--muted);
+             max-height: calc(1.35em * 3); overflow: hidden; overflow-wrap: anywhere; }
+  #dashSay b { color: var(--text); font-weight: 500; }
+  #dashSay .later { opacity: .45; }
+  .dbtn { width: 48px; height: 48px; flex-shrink: 0; border: none; border-radius: 50%; background: transparent;
+          display: flex; align-items: center; justify-content: center; cursor: pointer; }
+  .dbtn:active { background: rgba(124,196,255,.15); }
+  #dashMic.on .icon { stroke: var(--listen); }
+  #dashSheet {
+    position: absolute; left: 0; right: 0; bottom: 0; top: calc(env(safe-area-inset-top) + var(--dash-head));
+    display: flex; flex-direction: column; pointer-events: auto;
+    background: var(--panel); border-radius: 20px 20px 0 0; box-shadow: 0 -10px 40px rgba(0,0,0,.55);
+    padding: 0 env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
+    transform: translateY(105%); transition: transform .42s cubic-bezier(.2,.9,.3,1);
+  }
+  body.dash-open #dashSheet { transform: none; }
+  #dashGrip { height: 20px; display: flex; align-items: center; justify-content: center; touch-action: none; cursor: grab; }
+  #dashGrip span { width: 40px; height: 5px; border-radius: 3px; background: #2c3c46; }
+  #dashTabs { display: flex; padding: 0 10px; border-bottom: 1px solid #1d2a31; touch-action: none; }
+  #dashTabs button {
+    flex: 1; min-height: 46px; border: none; background: transparent; color: var(--muted);
+    font-size: 15px; font-family: inherit; border-bottom: 2px solid transparent; cursor: pointer;
+  }
+  #dashTabs button[aria-selected="true"] { color: var(--text); border-bottom-color: var(--accent); }
+  #dashBody { flex: 1; overflow-y: auto; padding: 12px 16px 24px; overscroll-behavior: contain;
+              -webkit-overflow-scrolling: touch; user-select: text; -webkit-user-select: text; }
+  .dpanel { display: none; max-width: 760px; margin: 0 auto; }
+  .dpanel.on { display: block; }
+  .dash-empty { color: var(--muted); font-size: 14px; padding: 16px 0; text-align: center; }
+  /* Logs */
+  .chips { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 10px; }
+  .chips button { min-height: 34px; padding: 0 12px; border-radius: 17px; border: 1px solid #22323a;
+                  background: transparent; color: var(--muted); font-size: 13px; font-family: inherit; cursor: pointer; }
+  .chips button[aria-pressed="true"] { background: rgba(124,196,255,.16); border-color: rgba(124,196,255,.5); color: var(--text); }
+  .ev { display: grid; grid-template-columns: auto auto 1fr; gap: 4px 8px; align-items: baseline;
+        padding: 8px 0; border-bottom: 1px solid #172229; font-size: 14px; line-height: 1.4; }
+  .ev time { color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; }
+  .ev .tag { font-size: 11px; text-transform: uppercase; letter-spacing: .04em; padding: 1px 6px; border-radius: 6px;
+             background: #1a262d; color: var(--muted); }
+  .ev .txt { color: var(--text); overflow-wrap: anywhere; }
+  .ev.t-heard .tag { color: var(--listen); }  .ev.t-said .tag { color: var(--eye); }
+  .ev.t-saw .tag { color: #e8c48a; }         .ev.t-memory .tag { color: #9fe0b8; }
+  .ev.t-error .tag { color: #ff8a80; }
+  .ev.new { animation: evIn .5s ease-out; }
+  @keyframes evIn { from { background: rgba(124,196,255,.14); } to { background: transparent; } }
+  /* Memory */
+  #factForm { display: flex; gap: 8px; margin-bottom: 10px; }
+  #factForm input { flex: 1; min-width: 0; height: 44px; border-radius: 10px; border: 1px solid #22323a;
+                    background: #0a1014; color: var(--text); padding: 0 12px; font-size: 16px; font-family: inherit; }
+  #factForm button { min-width: 64px; height: 44px; border: none; border-radius: 10px; background: var(--accent);
+                     color: #05222b; font-size: 15px; font-family: inherit; cursor: pointer; }
+  #factList { list-style: none; }
+  #factList li { display: flex; align-items: center; gap: 8px; border-bottom: 1px solid #172229; font-size: 15px; line-height: 1.4; }
+  #factList li span { flex: 1; padding: 8px 0; overflow-wrap: anywhere; }
+  #factList .del { width: 44px; height: 44px; flex-shrink: 0; border: none; border-radius: 50%; background: transparent;
+                   display: flex; align-items: center; justify-content: center; cursor: pointer; }
+  #factList .del .icon { width: 18px; height: 18px; stroke: #ff8a80; }
+  #factList .del:active { background: rgba(255,138,128,.15); }
+  /* Senses + Status */
+  .senseCam { position: relative; width: 100%; max-width: 420px; aspect-ratio: 4 / 3; margin: 0 auto 12px;
+              border-radius: 16px; overflow: hidden; background: #000; }
+  .senseCam video { width: 100%; height: 100%; object-fit: cover; display: block; }
+  .senseCam video.mirror { transform: scaleX(-1); }
+  #senseCamMsg { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+                 padding: 16px; text-align: center; color: var(--muted); font-size: 14px; }
+  .kv { display: grid; grid-template-columns: minmax(110px, auto) 1fr; gap: 0 12px; font-size: 15px; }
+  .kv dt, .kv dd { padding: 9px 0; border-bottom: 1px solid #172229; line-height: 1.4; }
+  .kv dt { color: var(--muted); }
+  .kv dd { color: var(--text); overflow-wrap: anywhere; }
+  .kv dd.soon { color: var(--muted); }
+  .dash-note { color: var(--muted); font-size: 12px; margin-top: 10px; line-height: 1.4; }
+  #dashSettings { margin-top: 16px; min-height: 44px; padding: 0 16px; border-radius: 10px; border: none;
+                  background: #22323a; color: var(--text); font-size: 15px; font-family: inherit; cursor: pointer; }
+  @media (prefers-reduced-motion: reduce) { #face, #dashSheet { transition: none; } }
+
   /* ---------- Settings ---------- */
   #settings {
     position: fixed; inset: 0; z-index: 100; background: rgba(0,0,0,.7);
@@ -402,6 +500,48 @@
       </div>
     </div>
     <div id="pvHint">Tap to snap</div>
+  </div>
+
+  <div id="dash" role="dialog" aria-label="Winslow's brain dashboard">
+    <div id="dashHead">
+      <div id="dashSay" aria-live="polite"></div>
+      <button class="dbtn" id="dashMic" aria-label="Talk to Winslow">
+        <svg class="icon" viewBox="0 0 24 24"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg>
+      </button>
+      <button class="dbtn" id="dashClose" aria-label="Close dashboard">
+        <svg class="icon" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg>
+      </button>
+    </div>
+    <div id="dashSheet">
+      <div id="dashGrip" aria-hidden="true"><span></span></div>
+      <div id="dashTabs" role="tablist" aria-label="Dashboard sections">
+        <button role="tab" id="tab-logs" data-tab="logs" aria-controls="p-logs">Logs</button>
+        <button role="tab" id="tab-memory" data-tab="memory" aria-controls="p-memory">Memory</button>
+        <button role="tab" id="tab-senses" data-tab="senses" aria-controls="p-senses">Senses</button>
+        <button role="tab" id="tab-status" data-tab="status" aria-controls="p-status">Status</button>
+      </div>
+      <div id="dashBody">
+        <section class="dpanel" id="p-logs" role="tabpanel" aria-labelledby="tab-logs">
+          <div class="chips" id="logFilters" role="group" aria-label="Show only"></div>
+          <div id="logList"></div>
+        </section>
+        <section class="dpanel" id="p-memory" role="tabpanel" aria-labelledby="tab-memory">
+          <form id="factForm" autocomplete="off">
+            <input id="factInput" type="text" placeholder="Add a fact, e.g. My human likes tea" aria-label="New fact" enterkeyhint="done">
+            <button type="submit" aria-label="Add fact">Add</button>
+          </form>
+          <ul id="factList"></ul>
+        </section>
+        <section class="dpanel" id="p-senses" role="tabpanel" aria-labelledby="tab-senses">
+          <div class="senseCam"><video id="senseVideo" playsinline muted autoplay aria-label="Live camera view"></video><div id="senseCamMsg"></div></div>
+          <dl class="kv" id="senseKv"></dl>
+        </section>
+        <section class="dpanel" id="p-status" role="tabpanel" aria-labelledby="tab-status">
+          <dl class="kv" id="statusKv"></dl>
+          <button id="dashSettings" aria-label="Open settings">Settings</button>
+        </section>
+      </div>
+    </div>
   </div>
 
   <div id="settings">
@@ -496,7 +636,7 @@
    1. STORAGE: everything the robot knows lives in one object,
       saved in this browser's localStorage (on the phone).
    ========================================================= */
-const APP_VERSION = "v4.4";
+const APP_VERSION = "v5.0";
 // iPhone bug: after rotating, fixed buttons can be drawn in one place but tappable in another.
 // Snapping the page back to the top re-syncs them.
 function resyncLayout() {
@@ -587,6 +727,73 @@ if (brain.character !== CHARACTER_VERSION) {
 }
 const addr = () => (typeof brain.address === "string" && brain.address.trim()) || DEFAULTS.address;
 
+/* ---------- Activity log: a timeline of what Winslow heard, said, saw and did ----------
+   Kept in IndexedDB on this phone (newest 500 events), shown in the brain dashboard.
+   Text is scrubbed so the API key can never end up in it. */
+const LOG_MAX = 500;
+let logDb = null, logMem = [];
+const logListeners = [];
+const logReady = new Promise(res => {
+  try {
+    const req = indexedDB.open("winslowLog", 1);
+    req.onupgradeneeded = () => req.result.createObjectStore("events", { keyPath: "id", autoIncrement: true });
+    req.onsuccess = () => { logDb = req.result; res(); };
+    req.onerror = req.onblocked = () => res();           // no IndexedDB: keep events in memory instead
+  } catch { res(); }
+});
+function scrub(s) {
+  s = String(s ?? "");
+  if (brain.apiKey) s = s.split(brain.apiKey).join("[key]");
+  return s.replace(/sk-or-[A-Za-z0-9_-]{6,}/g, "[key]").slice(0, 500);
+}
+function logEvent(type, text) {
+  const ev = { t: Date.now(), type, text: scrub(text) };
+  logListeners.forEach(f => { try { f(ev); } catch {} });
+  logReady.then(() => {
+    if (!logDb) { logMem.push(ev); if (logMem.length > LOG_MAX) logMem.shift(); return; }
+    try {
+      const st = logDb.transaction("events", "readwrite").objectStore("events");
+      st.add(ev);
+      if (Math.random() < 0.05) st.count().onsuccess = e => {      // now and then, trim the oldest
+        let extra = e.target.result - LOG_MAX;
+        if (extra > 0) st.openCursor().onsuccess = c => {
+          const cur = c.target.result;
+          if (cur && extra-- > 0) { cur.delete(); cur.continue(); }
+        };
+      };
+    } catch { logMem.push(ev); }
+  });
+}
+function getEvents(limit = 300) {                         // newest first
+  return logReady.then(() => new Promise(res => {
+    if (!logDb) return res(logMem.slice(-limit).reverse());
+    const out = [];
+    try {
+      const req = logDb.transaction("events").objectStore("events").openCursor(null, "prev");
+      req.onsuccess = e => { const c = e.target.result; if (c && out.length < limit) { out.push(c.value); c.continue(); } else res(out); };
+      req.onerror = () => res(out);
+    } catch { res(logMem.slice(-limit).reverse()); }
+  }));
+}
+// Today's chats and AI cost (OpenRouter reports the cost of each reply).
+function todayKey() { const d = new Date(); return `${d.getFullYear()}-${d.getMonth() + 1}-${d.getDate()}`; }
+function usageToday() {
+  if (!brain.usage || brain.usage.day !== todayKey()) brain.usage = { day: todayKey(), chats: 0, ai: 0, priced: 0, cost: 0 };
+  return brain.usage;
+}
+function countChat(ai, cost) {
+  const u = usageToday();
+  u.chats++;
+  if (ai) u.ai++;
+  if (Number.isFinite(cost)) { u.cost += cost; u.priced++; }
+}
+// Brain dashboard state (section 10). Declared early because the camera and AI code check it.
+let dashTab = "logs", sensesStream = null;
+function rememberFact(f) {
+  if (brain.memory.includes(f)) return;
+  brain.memory.push(f); logEvent("memory", "Remembered: " + f);
+}
+
 /* =========================================================
    2. FACE: blinking, glancing, emotions, talking mouth
    ========================================================= */
@@ -638,6 +845,7 @@ function mouthOff() { clearInterval(mouthTimer); mouth.style.height = "2vmin"; }
 const CAPTION_HOLD_MS = 4000;
 let captionActiveAt = 0, captionTimer = null;
 function show(html) {
+  if (html) document.getElementById("dashSay").innerHTML = html;   // the dashboard header mirrors captions
   caption.innerHTML = html;
   if (!html) { caption.classList.remove("on"); return; }
   caption.classList.add("on");
@@ -732,7 +940,10 @@ function renderSay(ci) {
   const c = sayChunks[i]; if (!c) return;
   const rel = ci - c.start;
   const html = c.text.trim() ? c.text.replace(/\S+/g, (w, off) => off <= rel ? esc(w) : `<span class="later">${esc(w)}</span>`) : "";
-  if (html !== sayHtml) speechEl.innerHTML = sayHtml = html;
+  if (html === sayHtml) return;
+  speechEl.innerHTML = sayHtml = html;
+  if (html && document.body.classList.contains("dash-open"))      // face is tiny: his words go in the header
+    document.getElementById("dashSay").innerHTML = `<b>${esc(brain.name)}:</b> ` + html;
 }
 function sayStart(text, rate) {
   clearTimeout(sayHide); clearInterval(sayTimer);
@@ -756,6 +967,7 @@ let speakGen = 0;
 function speak(text, onDone, opts = {}) {
   hideDock();
   const gen = ++speakGen;
+  if (!opts._waited && !opts.preview) logEvent("said", text);
   if (!("speechSynthesis" in window)) { mouthSay(text, 1500 + text.length * 80); onDone && onDone(); return; }
   if (!opts._waited && !speechSynthesis.getVoices().length) {
     speakingUntil = Date.now() + 2500;                   // counts as talking while we wait
@@ -946,9 +1158,13 @@ Sometimes your human shows you a photo from your camera (your eyes). React to wh
 When a photo comes with a message, answer what your human actually said. Only describe the scene if they ask about it or something new shows up. Never repeat a description, rating or line you already said earlier in this chat: say something new and keep the conversation moving.
 
 ALWAYS reply with ONLY a JSON object, nothing else, in exactly this shape:
-{"say": "what you say out loud", "emotion": "happy|excited|sad|surprised|thinking|sleepy|neutral", "remember": ["new long-term fact", ...]}
+{"say": "what you say out loud", "emotion": "happy|excited|sad|surprised|thinking|sleepy|neutral", "remember": ["new long-term fact", ...], "action": null, "dashboard_tab": null}
 
-Use "remember" only for genuinely new, lasting facts worth keeping (names, likes, plans, important events). Usually it is an empty list.`;
+Use "remember" only for genuinely new, lasting facts worth keeping (names, likes, plans, important events). Usually it is an empty list.
+
+Actions you can take. Put one in "action", or leave it null (the usual case):
+- "show_dashboard": open your brain dashboard when the user asks to see your brain, dashboard, logs, memory or status. If they asked for one part, set "dashboard_tab" to "logs", "memory", "senses" or "status"; otherwise leave it null. Say a short line as you open it.${dashIsOpen() ? `
+Your brain dashboard is open right now, on the ${dashTab} tab.` : ""}`;
 }
 
 function parseReply(text) {
@@ -1030,6 +1246,18 @@ function localReply(text) {
     return { say: pick([`${cap(thing)}. Noted, ${a}. I shall remember that.`, `Noted, ${a}. ${cap(thing)}. I shall remember that.`]),
              emotion: "happy", remember: [`My human likes ${thing}`] };
   }
+  // Brain dashboard: "show me your brain", "open your dashboard", "show your logs",
+  // "what's in your memory", "status report"
+  if (!/\b(close|hide|shut|exit)\b/.test(t) &&
+      (/\b(show|open|see|pull up|bring up|let me see)\b.*\b(brain|dashboard|logs?|memory|memories|status|senses)\b/.test(t) ||
+       /what'?s in (your|ur) (memory|head|brain)|status report|\bdashboard\b/.test(t))) {
+    const tab = /\blogs?\b/.test(t) ? "logs" : /memor/.test(t) ? "memory" : /\bsenses?\b/.test(t) ? "senses" :
+                /\bstatus\b/.test(t) ? "status" : null;
+    return { say: pick([`Certainly, ${a}. Do mind the cobwebs.`, `My brain, ${a}, laid bare. Try not to judge.`,
+                        `Right away, ${a}. Everything I know, more or less.`,
+                        tab === "status" ? `Status report coming up, ${a}.` : `Opening the dashboard, ${a}.`]),
+             emotion: "neutral", action: "show_dashboard", dashboard_tab: tab, noAside: true };
+  }
   if (/what do you (remember|know)|your memory/.test(t))
     return brain.memory.length
       ? { say: `I recall the following, ${a}. ` + brain.memory.slice(-4).join(". ") + ".", emotion: "neutral", noAside: true }
@@ -1102,10 +1330,12 @@ function replyOffline(userText) {
   setMood("thinking");
   setTimeout(() => {
     const reply = localBrain(userText);
-    (reply.remember || []).forEach(f => { if (!brain.memory.includes(f)) brain.memory.push(f); });
+    (reply.remember || []).forEach(rememberFact);
+    countChat(false);
     save();
     setMood(reply.emotion || "neutral");
     speak(reply.say, () => setTimeout(() => setMood("neutral"), 1200));
+    doAction(reply);
   }, 500);
 }
 
@@ -1118,6 +1348,9 @@ let photoSentThisPreview = false;                       // reset each time the p
 let busy = false;
 async function think(userText, image) {
   if (busy || capturing) return;
+  logEvent("heard", userText);
+  // With the dashboard open, short commands ("show memory", "scroll down", "that'll be all") act on it directly.
+  if (dashIsOpen() && dashCommand(userText)) return;
   // A "look" phrase opens the camera and snaps. With the preview already open, a fresh frame
   // only goes along when the words are about what's in view, or for the first thing said:
   // sending a photo with every sentence made Winslow describe the same scene over and over.
@@ -1134,7 +1367,9 @@ async function think(userText, image) {
       bumpIdle();
       image = await grabFrame();
       photoSentThisPreview = true;
+      logEvent("saw", "Took a photo for: " + userText);
     } catch (err) {
+      logEvent("error", "Camera: " + (err && (err.message || err.name)));
       setMood("sad"); show(cameraErrorText(err));
       setTimeout(() => setMood("neutral"), 2000);
       return;
@@ -1168,7 +1403,8 @@ async function think(userText, image) {
         max_tokens: 300,
         temperature: 0.8,
         frequency_penalty: 0.5,                          // discourage repeating the same lines
-        presence_penalty: 0.3
+        presence_penalty: 0.3,
+        usage: { include: true }                         // OpenRouter adds the reply's cost (for the dashboard)
       })
     });
     const data = await res.json();
@@ -1181,17 +1417,19 @@ async function think(userText, image) {
 
     brain.history.push({ role: "assistant", content: raw });
     if (Array.isArray(reply.remember)) {
-      reply.remember.filter(f => typeof f === "string" && f.trim())
-        .forEach(f => { if (!brain.memory.includes(f.trim())) brain.memory.push(f.trim()); });
+      reply.remember.filter(f => typeof f === "string" && f.trim()).forEach(f => rememberFact(f.trim()));
     }
+    countChat(true, Number(data.usage?.cost));
     save();
 
     setMood(reply.emotion || "neutral");
     speak(reply.say || "Hmm.", () => setTimeout(() => setMood("neutral"), 1200));
+    doAction(reply);
   } catch (err) {
+    logEvent("error", "Brain: " + err.message);
     brain.history.pop();
     setMood("sad");
-    show("Brain error: " + esc(err.message) +
+    show("Brain error: " + esc(scrub(err.message)) +
          (image ? "<br>This AI model may not handle images. Try a vision model like openai/gpt-4o-mini in settings." : ""));
     speak(`My apologies, ${addr()}. My brain appears to have hiccupped.`);
   } finally {
@@ -1262,6 +1500,7 @@ async function getCamera(want) {
 async function startCamera() {
   const gen = ++camGen;
   stopTrackStream();                                     // one camera at a time: the preview takes over face tracking
+  stopSensesStream();                                    // ...and the dashboard's Senses view
   stopStream();
   const want = brain.camera === "environment" ? "environment" : "user";
   const { stream, facing, fellBack } = await getCamera(want);
@@ -1300,6 +1539,7 @@ async function openPreview() {
   try {
     if (!(await startCamera())) return false;
     if (caption.textContent === "Opening my eyes…") show("I am looking. Ask me what I see.");
+    logEvent("state", `Camera opened (${camLabel(brain.camera)})`);
     bumpIdle();
     return true;
   } catch (err) {
@@ -1313,6 +1553,7 @@ async function openPreview() {
 }
 
 function closePreview() {
+  if (camStream) logEvent("state", "Camera closed");
   camGen++;                                              // cancels any camera still opening
   stopStream();
   clearTimeout(idleTimer);
@@ -1457,7 +1698,7 @@ const PREVIEW_LINES = () => [`${brain.name}, at your service, ${addr()}.`, `Your
                              `Ah. You're back, ${addr()}. I trust the day was tolerable.`];
 $("btnPreview").addEventListener("click", () => {
   unlockSpeech();
-  speak(pick(PREVIEW_LINES()), null, {
+  speak(pick(PREVIEW_LINES()), null, { preview: true,
     voiceName: $("sVoice").value, pitch: Number($("sPitch").value), rate: Number($("sRate").value)
   });
 });
@@ -1468,7 +1709,7 @@ $("btnRandomVoice").addEventListener("click", () => {
   if (!en.length) return;
   const v = pick(en);
   $("sVoice").value = v.name;
-  speak(`Good day. This is ${v.name}. Shall I be your voice?`, null, { voiceName: v.name, pitch: Number($("sPitch").value), rate: Number($("sRate").value) });
+  speak(`Good day. This is ${v.name}. Shall I be your voice?`, null, { preview: true, voiceName: v.name, pitch: Number($("sPitch").value), rate: Number($("sRate").value) });
 });
 $("gear").addEventListener("click", openSettings);
 $("btnClose").addEventListener("click", () => panel.classList.remove("open"));
@@ -1551,13 +1792,13 @@ let lastActivity = Date.now(), drowsySince = 0, waking = false, zTimer = null;
 
 function poke() { lastActivity = Date.now(); }
 function sleepBlocked() {
-  return listening || busy || capturing || camOpening || previewOpen() || waking ||
+  return listening || busy || capturing || camOpening || previewOpen() || waking || dashIsOpen() ||
     isSpeaking() || panel.classList.contains("open");
 }
 
 function goDrowsy() {
   hideDock(); typed.blur();
-  sleepState = "drowsy"; drowsySince = Date.now();
+  sleepState = "drowsy"; drowsySince = Date.now(); logEvent("state", "Getting sleepy");
   setMood("sleepy"); lookAt(0, 0);
   const line = `Do forgive me, ${addr()}. I may rest my eyes for a moment.`;
   speak(line, null, { volume: 0.4, rate: 0.8, pitch: (brain.pitch ?? 0.9) * 0.85 });
@@ -1574,7 +1815,7 @@ function spawnZ() {
   zzz.appendChild(z);
 }
 function goAsleep() {
-  sleepState = "asleep";
+  sleepState = "asleep"; logEvent("state", "Fell asleep");
   setMood("asleep"); lookAt(0, 0); show("");
   spawnZ();
   zTimer = setInterval(spawnZ, 1500);
@@ -1584,7 +1825,7 @@ function stopZs() { clearInterval(zTimer); zTimer = null; zzz.innerHTML = ""; }
 // Returns true if Winslow was sleeping (so the triggering tap should only wake it).
 function wake(after) {
   if (sleepState === "awake") return false;
-  sleepState = "awake"; waking = true; stopZs(); poke();
+  sleepState = "awake"; waking = true; stopZs(); poke(); logEvent("state", "Woke up");
   if ("speechSynthesis" in window) speechSynthesis.cancel(); // cut off a yawn in progress
   // Unhurried: the lids lift to half-open, then the eyes open smoothly, then one composed line.
   document.body.classList.add("waking");
@@ -1706,7 +1947,7 @@ async function loadDetector() {
 
 // Low-res hidden front-camera stream, only used when the live preview is closed.
 async function startTrackStream() {
-  if (trackStream || previewOpen() || camOpening || document.hidden || !brain.followFaces) return;
+  if (trackStream || previewOpen() || camOpening || sensesStream || document.hidden || !brain.followFaces) return;
   if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
     const e = new Error("no camera api"); e.name = "NoCameraAPI"; throw e;
   }
@@ -1846,7 +2087,7 @@ const SWIPE_UP_PX = 40;
 const DOCK_ZONE = 0.85;              // taps below 85% of the screen height open the dock
 let dockTimer = null;
 
-function showDock() { document.body.classList.add("dock-open"); bumpDock(); }
+function showDock() { if (dashIsOpen()) return; document.body.classList.add("dock-open"); bumpDock(); }
 function hideDock() { document.body.classList.remove("dock-open"); clearTimeout(dockTimer); }
 function bumpDock() { clearTimeout(dockTimer); dockTimer = setTimeout(hideDock, DOCK_HIDE_MS); }
 const dockOpen = () => document.body.classList.contains("dock-open");
@@ -1898,6 +2139,240 @@ if (window.visualViewport) {
   };
   visualViewport.addEventListener("resize", placeTypebar);
   visualViewport.addEventListener("scroll", placeTypebar);
+}
+
+/* =========================================================
+   10. BRAIN DASHBOARD: opened by voice ("show me your brain"), the
+       AI's "show_dashboard" action, or the offline brain. Tabs: Logs,
+       Memory, Senses, Status. Never shows the API key.
+   ========================================================= */
+const DASH_TABS = ["logs", "memory", "senses", "status"];
+const LOG_TYPES = { heard: "Heard", said: "Said", saw: "Saw", memory: "Memory", state: "State", error: "Error" };
+const dashSay = $("dashSay"), dashBody = $("dashBody"), logList = $("logList"), factList = $("factList");
+const senseVideo = $("senseVideo"), senseCamMsg = $("senseCamMsg"), dashMic = $("dashMic");
+let logFilter = "all", dashTicker = null, sensesOpening = false;
+
+function dashIsOpen() { return document.body.classList.contains("dash-open"); }
+function doAction(reply) {
+  if (reply && reply.action === "show_dashboard")
+    openDashboard(DASH_TABS.includes(reply.dashboard_tab) ? reply.dashboard_tab : null);
+}
+function openDashboard(tab) {
+  poke(); hideDock(); typed.blur(); document.body.classList.remove("typing");
+  const was = dashIsOpen();
+  document.body.classList.add("dash-open");
+  if (!was) { logEvent("state", "Dashboard opened"); dashSay.innerHTML = caption.innerHTML; }
+  dashSwitch(DASH_TABS.includes(tab) ? tab : dashTab);
+  clearInterval(dashTicker); dashTicker = setInterval(dashTick, 500);
+}
+function closeDashboard() {
+  if (!dashIsOpen()) return;
+  document.body.classList.remove("dash-open");
+  clearInterval(dashTicker); dashTicker = null;
+  sensesOff();                                          // the Senses camera stops unless something else is using it
+  poke(); logEvent("state", "Dashboard closed");
+}
+function dashSwitch(tab) {
+  dashTab = tab; poke();
+  document.querySelectorAll("#dashTabs [role=tab]").forEach(b => b.setAttribute("aria-selected", String(b.dataset.tab === tab)));
+  document.querySelectorAll(".dpanel").forEach(p => p.classList.toggle("on", p.id === "p-" + tab));
+  dashBody.scrollTop = 0;
+  if (tab === "senses") sensesOn(); else sensesOff();
+  if (tab === "logs") renderLogs();
+  if (tab === "memory") renderMemory();
+  dashTick();
+}
+function dashTick() {
+  if (!dashIsOpen()) return;
+  dashMic.classList.toggle("on", listening);
+  if (dashTab === "senses") {
+    if (!(camStream || trackStream || sensesStream) || (sensesStream && (camStream || trackStream))) sensesOn();
+    renderSenses();
+  }
+  if (dashTab === "status") renderStatus();
+}
+const setHtml = (el, html) => { if (el._html !== html) el.innerHTML = el._html = html; };
+const kv = rows => rows.map(([k, v, soon]) => `<dt>${esc(k)}</dt><dd${soon ? ' class="soon"' : ""}>${esc(v)}</dd>`).join("");
+
+/* ----- Logs ----- */
+$("logFilters").innerHTML = [["all", "All"], ...Object.entries(LOG_TYPES)]
+  .map(([k, label]) => `<button data-f="${k}" aria-pressed="${k === "all"}">${label}</button>`).join("");
+$("logFilters").addEventListener("click", e => {
+  const b = e.target.closest("button"); if (!b) return;
+  logFilter = b.dataset.f;
+  document.querySelectorAll("#logFilters button").forEach(x => x.setAttribute("aria-pressed", String(x === b)));
+  renderLogs();
+});
+const passFilter = ev => logFilter === "all" || ev.type === logFilter;
+function evHtml(ev, isNew) {
+  const d = new Date(ev.t), today = d.toDateString() === new Date().toDateString();
+  const time = (today ? "" : d.toLocaleDateString([], { month: "short", day: "numeric" }) + " ") +
+               d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit", second: "2-digit" });
+  return `<div class="ev t-${esc(ev.type)}${isNew ? " new" : ""}"><time>${esc(time)}</time>` +
+         `<span class="tag">${esc(LOG_TYPES[ev.type] || ev.type)}</span><span class="txt">${esc(ev.text)}</span></div>`;
+}
+async function renderLogs() {
+  const evs = (await getEvents(300)).filter(passFilter);
+  if (dashTab !== "logs") return;
+  logList.innerHTML = evs.length ? evs.map(ev => evHtml(ev)).join("") : `<p class="dash-empty">Nothing logged yet.</p>`;
+}
+logListeners.push(ev => {                               // live updates, newest on top
+  if (!dashIsOpen() || dashTab !== "logs" || !passFilter(ev)) return;
+  const empty = logList.querySelector(".dash-empty"); if (empty) empty.remove();
+  logList.insertAdjacentHTML("afterbegin", evHtml(ev, true));
+});
+
+/* ----- Memory ----- */
+const xIcon = `<svg class="icon" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg>`;
+function renderMemory() {
+  factList.innerHTML = brain.memory.length
+    ? brain.memory.map((f, i) => `<li><span>${esc(f)}</span><button class="del" data-i="${i}" aria-label="Forget: ${esc(f)}">${xIcon}</button></li>`).join("")
+    : `<li class="dash-empty">Nothing remembered yet.</li>`;
+}
+function forgetFact(i) {
+  const [f] = brain.memory.splice(i, 1);
+  if (f) { save(); logEvent("memory", "Forgot: " + f); }
+  if (dashTab === "memory") renderMemory();
+  return f;
+}
+factList.addEventListener("click", e => { const b = e.target.closest(".del"); if (b) { poke(); forgetFact(+b.dataset.i); } });
+$("factForm").addEventListener("submit", e => {
+  e.preventDefault(); poke();
+  const v = $("factInput").value.trim().slice(0, 200);
+  if (!v) return;
+  rememberFact(v); save(); $("factInput").value = ""; renderMemory();
+});
+
+/* ----- Senses: one camera only. Show whatever stream is already running (camera bubble or
+   face tracking); otherwise open one just for this tab, and stop it when the tab closes. ----- */
+function attachSense(stream, front) {
+  if (senseVideo.srcObject !== stream) { senseVideo.srcObject = stream; senseVideo.play().catch(() => {}); }
+  senseVideo.classList.toggle("mirror", !!front);
+  senseCamMsg.textContent = "";
+}
+async function sensesOn() {
+  if (camStream) return attachSense(camStream, pv.classList.contains("mirror"));
+  if (trackStream) return attachSense(trackStream, true);
+  if (sensesStream) return attachSense(sensesStream, sensesStream._front);
+  if (sensesOpening) return;
+  sensesOpening = true; senseCamMsg.textContent = "Opening camera…";
+  try {
+    const { stream, facing } = await getCamera(brain.camera === "environment" ? "environment" : "user");
+    if (!dashIsOpen() || dashTab !== "senses" || camStream || trackStream) { stream.getTracks().forEach(t => t.stop()); return; }
+    stopTrackStream();
+    sensesStream = stream; sensesStream._front = (facing || "user") === "user";
+    attachSense(stream, sensesStream._front);
+  } catch (err) {
+    senseCamMsg.innerHTML = cameraErrorText(err);
+  } finally { sensesOpening = false; }
+}
+function stopSensesStream() {
+  if (!sensesStream) return;
+  sensesStream.getTracks().forEach(t => t.stop());
+  if (senseVideo.srcObject === sensesStream) senseVideo.srcObject = null;
+  sensesStream = null;
+}
+function sensesOff() {
+  const own = !!sensesStream;
+  stopSensesStream();
+  senseVideo.srcObject = null;
+  if (own && brain.followFaces) setTimeout(startTracking, 300);   // hand the camera back to face tracking
+}
+function renderSenses() {
+  const face = !brain.followFaces ? "Off (Follow faces is off in settings)"
+    : !(trackStream || previewOpen()) ? "Paused while this view has the camera"
+    : Date.now() - lastFaceAt < 1500 ? "Yes, I can see you" : "No face in view";
+  const mic = !SR ? "Not supported in this browser"
+    : listening ? "Listening" + (convo ? " (conversation mode)" : "")
+    : convo ? "Between turns (conversation mode)" : "Off";
+  const cam = camStream ? `On: camera bubble (${camLabel(brain.camera)})` : trackStream ? "On: face tracking (front)"
+    : sensesStream ? `On: this view (${sensesStream._front ? "front" : "back"})` : "Off";
+  setHtml($("senseKv"), kv([["Face detected", face], ["Microphone", mic], ["Camera", cam],
+    ["Battery", "Body not connected yet", true], ["Distance", "Body not connected yet", true],
+    ["Edge sensors", "Body not connected yet", true]]));
+}
+
+/* ----- Status ----- */
+function renderStatus() {
+  const u = usageToday();
+  const cost = u.priced ? `$${u.cost.toFixed(4)}` + (u.priced < u.ai ? ` (${u.ai - u.priced} replies not priced)` : "")
+    : u.ai ? "Not reported by this model" : "$0.0000";
+  const state = { awake: "Awake", drowsy: "Sleepy", asleep: "Asleep" }[sleepState] + (sleepState === "awake" && mood !== "neutral" ? ` (${mood})` : "");
+  setHtml($("statusKv"), kv([
+    ["Version", APP_VERSION], ["AI model", brain.apiKey ? brain.model || "openrouter/auto" : "Offline brain (no API key)"],
+    ["API key", brain.apiKey ? "Set (hidden)" : "Not set"],
+    ["Chats today", `${u.chats}` + (u.ai ? ` (${u.ai} with the AI)` : "")], ["AI cost today (est.)", cost],
+    ["State", state], ["Sleeps after", brain.sleepAfter ? `${brain.sleepAfter} min idle` : "Never"],
+    ["Memory", `${brain.memory.length} fact${brain.memory.length === 1 ? "" : "s"}`],
+    ["Voice", brain.voiceName || "Automatic (British first)"],
+    ["Body connection", "Not connected (no body yet)", true]]));
+}
+$("dashSettings").addEventListener("click", openSettings);
+
+/* ----- Controls: tabs, X, mic, swipe down, Escape ----- */
+$("dashTabs").addEventListener("click", e => { const b = e.target.closest("[role=tab]"); if (b) dashSwitch(b.dataset.tab); });
+$("dashClose").addEventListener("click", () => closeDashboard());
+dashMic.addEventListener("click", () => { poke(); toggleMic(); });   // inside the tap handler, as iPhone requires
+document.addEventListener("keydown", e => {
+  if (e.key === "Escape" && dashIsOpen() && !panel.classList.contains("open")) closeDashboard();
+});
+// Swipe down on the header, grip or tabs (or on the list when it's scrolled to the top) closes it.
+function swipeToClose(el, needTop) {
+  let y0 = null, x0 = 0;
+  el.addEventListener("pointerdown", e => { y0 = e.clientY; x0 = e.clientX; });
+  el.addEventListener("pointerup", e => {
+    if (y0 === null) return;
+    const dy = e.clientY - y0, dx = e.clientX - x0; y0 = null;
+    if (dy > 70 && dy > Math.abs(dx) * 1.5 && (!needTop || dashBody.scrollTop <= 0)) closeDashboard();
+  });
+  el.addEventListener("pointercancel", () => y0 = null);
+}
+swipeToClose($("dashHead")); swipeToClose($("dashGrip")); swipeToClose($("dashTabs"));
+// The list scrolls natively, so a downward drag at the very top is the only "close" there.
+let bodyY0 = null;
+dashBody.addEventListener("touchstart", e => { bodyY0 = dashBody.scrollTop <= 0 ? e.touches[0].clientY : null; }, { passive: true });
+dashBody.addEventListener("touchend", e => {
+  if (bodyY0 !== null && e.changedTouches[0].clientY - bodyY0 > 90 && dashBody.scrollTop <= 0) closeDashboard();
+  bodyY0 = null;
+}, { passive: true });
+["pointerdown", "scroll", "input"].forEach(ev => $("dash").addEventListener(ev, poke, { passive: true, capture: true }));
+
+/* ----- Talking while it's open ----- */
+// Returns true if the words were a dashboard command (handled here, no AI call needed).
+function dashCommand(text) {
+  const t = text.toLowerCase().replace(/[.!?,;:]/g, " ").replace(/\s+/g, " ").trim();
+  const a = addr();
+  const say = line => speak(line, () => setTimeout(() => setMood("neutral"), 800));
+  const nm = brain.name.toLowerCase().replace(/[^a-z0-9 ]/g, "");
+  if (/\b(close|hide|shut|exit|dismiss)\b.*\b(dashboard|brain|panel|it|that|this)\b|^(close|done|exit|dismiss)$|that'?ll be all|that will be all|that is all/.test(t) ||
+      (nm && new RegExp(`\\bthanks?(?: you)?(?: very much)? ${nm}\\b`).test(t))) {
+    closeDashboard();
+    say(pick([`Very good, ${a}.`, "As you were.", `Of course, ${a}. Brain closed for business.`]));
+    return true;
+  }
+  if (/\b(forget|delete|remove|erase)\b (that|the) (last|latest|newest|most recent)\b/.test(t)) {
+    if (dashTab !== "memory") dashSwitch("memory");
+    const f = brain.memory.length ? forgetFact(brain.memory.length - 1) : null;
+    say(f ? `Done, ${a}. "${f}" is gone.` : `There is nothing left to forget, ${a}.`);
+    return true;
+  }
+  let m;
+  if ((m = t.match(/\bscroll (down|up)\b|\b(?:go|scroll|jump) to the (top|bottom)\b|\b(?:page|move) (down|up)\b/))) {
+    const dir = m[1] || m[2] || m[3];
+    const to = dir === "top" ? 0 : dir === "bottom" ? dashBody.scrollHeight
+      : dashBody.scrollTop + (dir === "down" ? 1 : -1) * dashBody.clientHeight * 0.75;
+    dashBody.scrollTo({ top: to, behavior: "smooth" }); poke();
+    say(pick(dir === "up" || dir === "top" ? ["Up we go.", "There."] : ["Down we go.", "There.", "Scrolling."]));
+    return true;
+  }
+  if ((m = t.match(/\b(?:show|open|go to|switch to|see|view|back to)\b.*?\b(logs?|memor(?:y|ies)|senses|status)\b/) ||
+           t.match(/^(?:the |your )?(logs?|memor(?:y|ies)|senses|status)(?: tab)?$/))) {
+    const tab = /^log/.test(m[1]) ? "logs" : /^memor/.test(m[1]) ? "memory" : m[1];
+    dashSwitch(tab);
+    say(pick([`${tab.charAt(0).toUpperCase() + tab.slice(1)}, ${a}.`, `Here you are, ${a}.`, "Certainly."]));
+    return true;
+  }
+  return false;
 }
 
 document.body.classList.toggle("debug", !!brain.debug);
