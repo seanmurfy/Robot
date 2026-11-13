@@ -382,6 +382,11 @@
   .ev.t-heard .tag { color: var(--listen); }  .ev.t-said .tag { color: var(--eye); }
   .ev.t-saw .tag { color: #e8c48a; }         .ev.t-memory .tag { color: #9fe0b8; }
   .ev.t-error .tag { color: #ff8a80; }
+  .ev.t-search .tag { color: #c9a8ff; }
+  .ev-links { display: flex; flex-direction: column; gap: 2px; margin-top: 4px; }
+  .ev-links a { color: var(--accent); font-size: 13px; text-decoration: none; overflow-wrap: anywhere; padding: 3px 0; }
+  .ev-links a:active { text-decoration: underline; }
+  .ev-links .host { color: var(--muted); font-size: 12px; }
   .ev.new { animation: evIn .5s ease-out; }
   @keyframes evIn { from { background: rgba(124,196,255,.14); } to { background: transparent; } }
   /* Memory */
@@ -563,6 +568,14 @@
       </select>
       <small>Which camera Winslow looks through. The switch button in the camera view changes it too.</small>
 
+      <label class="check"><input type="checkbox" id="sWeb"> Web search</label>
+      <small>Lets Winslow look up current things (scores, weather, news, opening hours) through OpenRouter.
+        Each search costs a little extra. Needs an API key.</small>
+
+      <label for="sCity">Home city (optional)</label>
+      <input id="sCity" type="text" placeholder="e.g. Manchester, UK" autocomplete="off">
+      <small>Helps with local answers like weather and opening times. Stays on this phone and in your AI requests.</small>
+
       <label class="check"><input type="checkbox" id="sConvo"> Keep listening after replies</label>
       <small>Tap Winslow's face once and just keep talking: it listens again after each answer. It stops when
         you go quiet for a bit, or when you tap the face again.</small>
@@ -636,7 +649,7 @@
    1. STORAGE: everything the robot knows lives in one object,
       saved in this browser's localStorage (on the phone).
    ========================================================= */
-const APP_VERSION = "v5.0";
+const APP_VERSION = "v5.1";
 // iPhone bug: after rotating, fixed buttons can be drawn in one place but tappable in another.
 // Snapping the page back to the top re-syncs them.
 function resyncLayout() {
@@ -673,6 +686,8 @@ const DEFAULTS = {
   hintShown: false,  // first-run "tap my face" hint already shown
   snapHints: 0,      // times the "Tap to snap" hint has shown under the camera bubble (max 3)
   convo: true,       // keep listening after each reply
+  webSearch: true,   // OpenRouter web search server tool (only used with an API key)
+  homeCity: "",      // optional, for local answers
   character: CHARACTER_VERSION
 };
 function load() {
@@ -746,8 +761,10 @@ function scrub(s) {
   if (brain.apiKey) s = s.split(brain.apiKey).join("[key]");
   return s.replace(/sk-or-[A-Za-z0-9_-]{6,}/g, "[key]").slice(0, 500);
 }
-function logEvent(type, text) {
+function logEvent(type, text, extra) {
   const ev = { t: Date.now(), type, text: scrub(text) };
+  if (extra && Array.isArray(extra.links) && extra.links.length)          // e.g. web search sources
+    ev.links = extra.links.filter(l => /^https?:\/\//i.test(l.url)).slice(0, 10).map(l => ({ url: l.url.slice(0, 500), title: scrub(l.title || "") }));
   logListeners.forEach(f => { try { f(ev); } catch {} });
   logReady.then(() => {
     if (!logDb) { logMem.push(ev); if (logMem.length > LOG_MAX) logMem.shift(); return; }
@@ -1141,12 +1158,18 @@ typed.addEventListener("keydown", (e) => {
 /* =========================================================
    5. BRAIN: send the conversation to an AI model on OpenRouter
    ========================================================= */
-function systemPrompt() {
+function systemPrompt(noSearch) {
   const facts = brain.memory.length ? brain.memory.map(f => "- " + f).join("\n") : "(nothing yet)";
   return `Your name is ${brain.name}. ${brain.persona}
 
 Things you remember about your human and your world:
 ${facts}
+
+Right now it is ${nowText()}.${brain.homeCity ? ` Your human lives in or near ${brain.homeCity}; use that for anything local (weather, opening hours, events) unless they name another place.` : ""}
+
+${searchOn() && !noSearch ? `CURRENT FACTS: you have a web search tool. Use it for anything time-sensitive or that may have changed since your training: sports fixtures, schedules and scores, weather, news, prices, opening hours, release dates, who currently holds a role, and anything "latest", "today", "tonight", "this week" or "next". Answer from what the search finds. If the search fails or finds nothing useful, say so plainly in character, for example "I'm afraid I can't confirm that at present, ${addr()}." Never guess or invent current facts.`
+  : `CURRENT FACTS: you cannot search the web right now. For anything time-sensitive (scores, schedules, weather, news, prices, opening hours, anything "latest"), do not guess: say plainly, in character, that you can't confirm it at present, for example "I'm afraid I can't confirm that at present, ${addr()}." You may still use the date and time above.`}
+In "say", give the answer itself in plain spoken words. Never read out sources, URLs, website names, citation marks or markdown.
 
 Address your human as "${addr()}". Use that wherever your character notes say "sir", and adjust pronouns to suit it.
 
@@ -1167,11 +1190,70 @@ Actions you can take. Put one in "action", or leave it null (the usual case):
 Your brain dashboard is open right now, on the ${dashTab} tab.` : ""}`;
 }
 
+// "Thursday 12 November 2026, 9:14 PM (Europe/London, UTC+0)"
+function nowText() {
+  const d = new Date();
+  const date = d.toLocaleDateString("en-GB", { weekday: "long", day: "numeric", month: "long", year: "numeric" });
+  const time = d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+  let tz = ""; try { tz = Intl.DateTimeFormat().resolvedOptions().timeZone || ""; } catch {}
+  const off = -d.getTimezoneOffset(), sign = off >= 0 ? "+" : "-", abs = Math.abs(off);
+  const utc = `UTC${sign}${Math.floor(abs / 60)}${abs % 60 ? ":" + String(abs % 60).padStart(2, "0") : ""}`;
+  return `${date}, ${time} (${tz ? tz + ", " : ""}${utc})`;
+}
+const searchOn = () => !!brain.apiKey && brain.webSearch !== false && !searchBroken;
+let searchBroken = false;                                // set for this session if the model rejects the tool
+// Things that are probably about the present: the "Consulting the wires…" caption shows at once for these.
+const TIMELY_RE = /\b(today|tonight|tomorrow|yesterday|this (week|weekend|morning|evening|year|season)|next|latest|current(ly)?|now|recent(ly)?|score|scores|fixture|fixtures|schedule|kick.?off|match|game|playing|weather|forecast|rain|temperature|news|headlines|price|prices|cost|stock|open|opening|closing|hours|release|released|who won|winning|election|traffic)\b/i;
+
+// The reply should be one JSON object, but with web search the text can carry citations or extra
+// prose around it. Try every balanced {...} (outermost first) and take the first with a "say".
 function parseReply(text) {
-  // Models sometimes wrap JSON in extra text, so find the {...} part.
-  const m = text.match(/\{[\s\S]*\}/);
-  if (m) { try { return JSON.parse(m[0]); } catch {} }
-  return { say: text.trim(), emotion: "neutral", remember: [] };
+  text = String(text || "");
+  for (let i = text.indexOf("{"); i !== -1; i = text.indexOf("{", i + 1)) {
+    let depth = 0, inStr = false, escp = false;
+    for (let j = i; j < text.length; j++) {
+      const ch = text[j];
+      if (inStr) { if (escp) escp = false; else if (ch === "\\") escp = true; else if (ch === '"') inStr = false; continue; }
+      if (ch === '"') inStr = true;
+      else if (ch === "{") depth++;
+      else if (ch === "}" && --depth === 0) {
+        try { const o = JSON.parse(text.slice(i, j + 1)); if (o && typeof o.say === "string") return o; } catch {}
+        break;
+      }
+    }
+  }
+  const m = text.match(/"say"\s*:\s*"((?:[^"\\]|\\.)*)"/);   // broken JSON: rescue the spoken line
+  if (m) { try { return { say: JSON.parse(`"${m[1]}"`), emotion: "neutral", remember: [] }; } catch {} }
+  return { say: text.replace(/```(?:json)?/gi, "").trim(), emotion: "neutral", remember: [] };
+}
+// Spoken text: no links, URLs, citation marks or markdown.
+function cleanSay(s) {
+  return String(s || "")
+    .replace(/\[([^\]]+)\]\((?:https?:)?[^)]*\)/g, "$1")             // [text](url) -> text
+    .replace(/\(?\bhttps?:\/\/[^\s)]+\)?/g, "")                       // bare URLs
+    .replace(/\bwww\.[^\s)]+/g, "")
+    .replace(/\[\d+(?:\s*[,\-–]\s*\d+)*\]|【[^】]*】|\[source[^\]]*\]/gi, "") // [1], [2,3], 【...】
+    .replace(/\*\*|__|`+|^#+\s*/gm, "")
+    .replace(/\s+([.,;:!?])/g, "$1").replace(/\(\s*\)/g, "").replace(/\s{2,}/g, " ").trim();
+}
+// What a reply says about any searches it ran. The server-tool docs only show the Responses API,
+// so look in each place Chat Completions might put it.
+function searchInfo(data) {
+  const msg = data?.choices?.[0]?.message || {};
+  const anns = [...(msg.annotations || []), ...((Array.isArray(msg.content) ? msg.content : []).flatMap(p => p.annotations || []))];
+  const seen = new Set(), sources = [];
+  for (const a of anns) {
+    const c = a?.url_citation || a;
+    const url = typeof c?.url === "string" ? c.url : "";
+    if (!/^https?:\/\//i.test(url) || seen.has(url)) continue;
+    seen.add(url); sources.push({ url, title: String(c.title || "").slice(0, 140) });
+  }
+  const u = data?.usage || {};
+  const det = u.server_tool_use_details || u.server_tool_use || {};
+  const count = Number(det.web_search_requests ?? det.tool_calls_executed ?? 0) || (sources.length ? 1 : 0);
+  const queries = (msg.tool_calls || []).filter(t => /search/i.test(t?.function?.name || t?.type || ""))
+    .map(t => { try { return JSON.parse(t.function.arguments).query; } catch { return null; } }).filter(Boolean);
+  return { count, sources, queries, cost: Number(u.cost) };
 }
 
 /* ---------- Offline brain: simple rules, no AI, no internet ----------
@@ -1302,6 +1384,13 @@ function localReply(text) {
       `I would tell you a joke about batteries, ${a}, but it is hardly worth the charge.`,
       "I once told a joke to a toaster. It was not amused, but then it rarely is.",
       "A robot walks into a bar. Or would, if he had legs. That is the joke, I am afraid."]), emotion: "neutral" };
+  if (/what('?s| is) (the |today'?s )?date|what day is (it|today)|which day is it|what('?s| is) today\b|what year is it/.test(t)) {
+    const d = new Date();
+    return { say: `It is ${d.toLocaleDateString("en-GB", { weekday: "long", day: "numeric", month: "long", year: "numeric" })}, ${a}.`, emotion: "neutral" };
+  }
+  // No AI and no web: never guess at current facts.
+  if (/\b(scores?|fixtures?|who won|winning|news|headlines|kick.?off|stock|price of|prices|opening hours|open (today|tonight|now|on)|closing time|latest|release date|election|traffic)\b/.test(t))
+    return { say: `I'm afraid I can't confirm that at present, ${a}. That needs my AI brain and a web search.`, emotion: "neutral", noAside: true };
   if (/\bweather\b/.test(t))
     return { say: `I have no window, ${a}. I shall assume grey and rate it a five, out of national habit.`, emotion: "thinking", noAside: true };
   if (/\btime\b/.test(t)) {
@@ -1389,33 +1478,59 @@ async function think(userText, image) {
     { type: "text", text: userText },
     { type: "image_url", image_url: { url: image } }
   ] };
+  // Web search runs inside OpenRouter during this same request. While it might be searching,
+  // show the thinking face and a caption: straight away for timely questions, otherwise if the reply is slow.
+  const useSearch = searchOn();
+  let wiresTimer = null;
+  const wires = () => { if (busy) { setMood("thinking"); show(`<b>${esc(brain.name)}:</b> Consulting the wires…`); } };
+  if (useSearch) { if (TIMELY_RE.test(userText)) wires(); else wiresTimer = setTimeout(wires, 2500); }
+  const call = withSearch => fetch("https://openrouter.ai/api/v1/chat/completions", {
+    method: "POST",
+    headers: {
+      "Authorization": "Bearer " + brain.apiKey,
+      "Content-Type": "application/json",
+      "X-Title": "Robot Brain"
+    },
+    body: JSON.stringify({
+      model: brain.model || "openrouter/auto",
+      messages,
+      max_tokens: 300,
+      temperature: 0.8,
+      frequency_penalty: 0.5,                            // discourage repeating the same lines
+      presence_penalty: 0.3,
+      usage: { include: true },                          // OpenRouter adds the reply's cost (for the dashboard)
+      // OpenRouter's web search server tool (replaces the deprecated "web" plugin and ":online" models).
+      ...(withSearch ? { tools: [{ type: "openrouter:web_search", parameters: { max_results: 3 } }] } : {})
+    })
+  });
   try {
-    const res = await fetch("https://openrouter.ai/api/v1/chat/completions", {
-      method: "POST",
-      headers: {
-        "Authorization": "Bearer " + brain.apiKey,
-        "Content-Type": "application/json",
-        "X-Title": "Robot Brain"
-      },
-      body: JSON.stringify({
-        model: brain.model || "openrouter/auto",
-        messages,
-        max_tokens: 300,
-        temperature: 0.8,
-        frequency_penalty: 0.5,                          // discourage repeating the same lines
-        presence_penalty: 0.3,
-        usage: { include: true }                         // OpenRouter adds the reply's cost (for the dashboard)
-      })
-    });
-    const data = await res.json();
+    let res = await call(useSearch), data = await res.json().catch(() => ({}));
+    if (!res.ok && useSearch && ![401, 402, 403, 429].includes(res.status)) {
+      // The model or account couldn't use search: answer without it, and don't guess current facts.
+      const why = data?.error?.message || ("HTTP " + res.status);
+      logEvent("error", "Web search unavailable: " + why);
+      if (/tool|function|web_search|not support/i.test(why)) searchBroken = true;   // skip it for the rest of this visit
+      messages[0] = { role: "system", content: systemPrompt(true) };
+      res = await call(false); data = await res.json().catch(() => ({}));
+    }
     if (!res.ok) throw new Error(data?.error?.message || ("HTTP " + res.status));
-    const raw = data.choices?.[0]?.message?.content || "";
+    if (caption.textContent.includes("Consulting the wires")) show(`<b>You:</b> ${esc(userText)}`);
+    const msg = data.choices?.[0]?.message || {};
+    const raw = Array.isArray(msg.content) ? msg.content.map(p => p?.text || "").join("") : String(msg.content || "");
     const reply = parseReply(raw);
-    // Speech reads "9/10" oddly, so always say "9 out of 10".
-    if (typeof reply.say === "string")
-      reply.say = reply.say.replace(/(?<![\d.\/])(\d+(?:\.\d+)?)\s*\/\s*(10|100)\b(?!\/)/g, "$1 out of $2");
+    // Spoken text: no links or citation marks, and "9 out of 10" rather than "9/10".
+    reply.say = cleanSay(reply.say).replace(/(?<![\d.\/])(\d+(?:\.\d+)?)\s*\/\s*(10|100)\b(?!\/)/g, "$1 out of $2");
+    // Log any searches (query, results, cost); sources go in the dashboard log, never into speech.
+    const si = searchInfo(data);
+    if (useSearch && si.count) {
+      const what = si.queries.length ? si.queries.map(q => `"${q}"`).join(", ") : `for "${userText}"`;
+      logEvent("search", `Searched ${what}: ${si.count > 1 ? si.count + " searches, " : ""}` +
+        `${si.sources.length || "no"} source${si.sources.length === 1 ? "" : "s"}` +
+        (Number.isFinite(si.cost) ? ` · $${si.cost.toFixed(4)} for this reply` : ""), { links: si.sources });
+    }
 
-    brain.history.push({ role: "assistant", content: raw });
+    // History keeps just the clean reply (no citations), so later turns stay small.
+    brain.history.push({ role: "assistant", content: JSON.stringify({ say: reply.say, emotion: reply.emotion || "neutral" }) });
     if (Array.isArray(reply.remember)) {
       reply.remember.filter(f => typeof f === "string" && f.trim()).forEach(f => rememberFact(f.trim()));
     }
@@ -1435,6 +1550,7 @@ async function think(userText, image) {
   } finally {
     busy = false;
     preview.classList.remove("sending");
+    clearTimeout(wiresTimer);
   }
 }
 
@@ -1647,6 +1763,8 @@ function openSettings() {
   $("sCamera").value = brain.camera === "environment" ? "environment" : "user";
   $("sFollow").checked = !!brain.followFaces;
   $("sConvo").checked = brain.convo !== false;
+  $("sWeb").checked = brain.webSearch !== false;
+  $("sCity").value = brain.homeCity || "";
   $("sDebug").checked = !!brain.debug;
   $("sSleep").value = String([0, 2, 5, 10].includes(brain.sleepAfter) ? brain.sleepAfter : 2);
   $("sPersona").value = brain.persona;
@@ -1727,6 +1845,8 @@ $("btnSave").addEventListener("click", () => {
   brain.camera = $("sCamera").value;
   brain.sleepAfter = Number($("sSleep").value);
   brain.convo = $("sConvo").checked;
+  brain.webSearch = $("sWeb").checked;
+  brain.homeCity = $("sCity").value.trim().slice(0, 80);
   brain.debug = $("sDebug").checked;
   document.body.classList.toggle("debug", brain.debug);
   if (!brain.convo) endConvo();
@@ -1761,6 +1881,8 @@ $("btnImport").addEventListener("click", async () => {
     if (typeof brain.name !== "string" || !brain.name.trim()) brain.name = DEFAULTS.name;
     if (typeof brain.persona !== "string" || !brain.persona.trim()) brain.persona = DEFAULTS.persona;
     if (typeof brain.address !== "string" || !brain.address.trim()) brain.address = DEFAULTS.address;
+    if (typeof brain.homeCity !== "string") brain.homeCity = "";
+    brain.webSearch = brain.webSearch !== false;
     if (brain.camera !== "environment") brain.camera = "user";
     if (![0, 2, 5, 10].includes(brain.sleepAfter)) brain.sleepAfter = 2;
     brain.followFaces = old.followFaces;                   // device-specific: a backup doesn't switch the camera on
@@ -2147,7 +2269,7 @@ if (window.visualViewport) {
        Memory, Senses, Status. Never shows the API key.
    ========================================================= */
 const DASH_TABS = ["logs", "memory", "senses", "status"];
-const LOG_TYPES = { heard: "Heard", said: "Said", saw: "Saw", memory: "Memory", state: "State", error: "Error" };
+const LOG_TYPES = { heard: "Heard", said: "Said", saw: "Saw", memory: "Memory", search: "Search", state: "State", error: "Error" };
 const dashSay = $("dashSay"), dashBody = $("dashBody"), logList = $("logList"), factList = $("factList");
 const senseVideo = $("senseVideo"), senseCamMsg = $("senseCamMsg"), dashMic = $("dashMic");
 let logFilter = "all", dashTicker = null, sensesOpening = false;
@@ -2209,7 +2331,16 @@ function evHtml(ev, isNew) {
   const time = (today ? "" : d.toLocaleDateString([], { month: "short", day: "numeric" }) + " ") +
                d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit", second: "2-digit" });
   return `<div class="ev t-${esc(ev.type)}${isNew ? " new" : ""}"><time>${esc(time)}</time>` +
-         `<span class="tag">${esc(LOG_TYPES[ev.type] || ev.type)}</span><span class="txt">${esc(ev.text)}</span></div>`;
+         `<span class="tag">${esc(LOG_TYPES[ev.type] || ev.type)}</span><span class="txt">${esc(ev.text)}${linksHtml(ev)}</span></div>`;
+}
+// Search sources: shown here, never spoken. Links open in a new tab.
+function linksHtml(ev) {
+  if (!Array.isArray(ev.links) || !ev.links.length) return "";
+  return `<span class="ev-links">` + ev.links.map(l => {
+    let host = ""; try { host = new URL(l.url).hostname.replace(/^www\./, ""); } catch {}
+    return `<span><a href="${esc(l.url)}" target="_blank" rel="noopener noreferrer">${esc(l.title || host || l.url)}</a>` +
+           (l.title && host ? ` <span class="host">${esc(host)}</span>` : "") + `</span>`;
+  }).join("") + `</span>`;
 }
 async function renderLogs() {
   const evs = (await getEvents(300)).filter(passFilter);
@@ -2305,6 +2436,8 @@ function renderStatus() {
     ["State", state], ["Sleeps after", brain.sleepAfter ? `${brain.sleepAfter} min idle` : "Never"],
     ["Memory", `${brain.memory.length} fact${brain.memory.length === 1 ? "" : "s"}`],
     ["Voice", brain.voiceName || "Automatic (British first)"],
+    ["Web search", !brain.apiKey ? "Needs an API key" : searchOn() ? "On (3 results per search)" : searchBroken ? "Not available with this model" : "Off"],
+    ["Home city", brain.homeCity || "Not set"], ["Local time", nowText()],
     ["Body connection", "Not connected (no body yet)", true]]));
 }
 $("dashSettings").addEventListener("click", openSettings);
