@@ -6,19 +6,22 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black">
 <meta name="theme-color" content="#05090c">
-<title>Sprocket</title>
+<title>Winslow</title>
 <style>
   :root {
     --bg: #05090c;
-    --eye: #ff8a2a;
-    --glow: rgba(255, 138, 42, 0.45);
-    --happy: #7dffb0;
-    --sad: #6f8cff;
-    --surprised: #ffe066;
+    /* Winslow: cool pale blue at rest; warm orange only while listening, so the two never blur together */
+    --eye: #a8d4ff;
+    --glow: rgba(140, 195, 255, 0.40);
+    --eye-bright: #d9ecff;                  /* "excited" = quietly pleased */
+    --sad: #7d8fae;
+    --surprised: #e4f1ff;
+    --listen: #ff9a3c;
+    --listen-glow: rgba(255, 154, 60, 0.45);
     --panel: #11181d;
-    --text: #cfe9f1;
-    --muted: #6d8a96;
-    --accent: #2ad4ff;
+    --text: #d6e6f2;
+    --muted: #7189a0;
+    --accent: #7cc4ff;
   }
   * { margin: 0; padding: 0; box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
   html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
@@ -37,7 +40,7 @@
     display: flex; flex-direction: column; align-items: center; justify-content: center;
   }
   /* Fixed height so blinks/moods don't make the mouth jump */
-  #eyes { display: flex; align-items: center; height: 31vmin; gap: 14vmin; transition: transform .35s cubic-bezier(.3,1.4,.5,1); }
+  #eyes { display: flex; align-items: center; height: 31vmin; gap: 14vmin; transition: transform .6s cubic-bezier(.4,0,.2,1); }
   /* Invisible full-screen layer under every control: tap = talk, swipe up / tap bottom = dock */
   #tap { position: fixed; inset: 0; z-index: 1; touch-action: none; }
   .eye {
@@ -50,28 +53,30 @@
   }
   .eye.blink { height: 2.5vmin !important; }
 
-  body.happy .eye { background: transparent; box-shadow: none; height: 15vmin; }
+  /* Composed expressions: small, smooth changes only. */
+  body.happy .eye, body.sad .eye, body.surprised .eye, body.excited .eye {
+    transition: height .45s ease-in-out, width .45s, border-radius .45s, background .5s, transform .5s, box-shadow .5s;
+  }
+  /* Happy: soft eyes, the lower lid lifted a little (a gentle smile in the eyes) */
+  body.happy .eye { height: 24vmin; overflow: hidden; transform: translateY(1vmin); }
   body.happy .eye::after {
-    content: ""; position: absolute; left: 0; right: 0; top: 0; height: 20vmin;
-    border: 4.5vmin solid var(--happy);
-    border-bottom-color: transparent; border-left-color: transparent; border-right-color: transparent;
-    border-radius: 50%;
+    content: ""; position: absolute; left: -20%; right: -20%; bottom: -9vmin; height: 15vmin;
+    background: var(--bg); border-radius: 50%;
   }
-  body.sad .eye { background: var(--sad); height: 20vmin; border-radius: 10vmin 10vmin 6vmin 6vmin; }
-  body.sad #eyeL { transform: rotate(-14deg) translateY(4vmin); }
-  body.sad #eyeR { transform: rotate(14deg) translateY(4vmin); }
-  body.surprised .eye { background: var(--surprised); width: 26vmin; height: 26vmin; border-radius: 50%; }
+  body.sad .eye { background: var(--sad); height: 20vmin; border-radius: 10vmin 10vmin 6vmin 6vmin;
+    box-shadow: 0 0 4vmin rgba(125,143,174,.3); }
+  body.sad #eyeL { transform: rotate(-8deg) translateY(3vmin); }
+  body.sad #eyeR { transform: rotate(8deg) translateY(3vmin); }
+  /* Surprised: a raised eyebrow, not a gasp */
+  body.surprised .eye { background: var(--surprised); width: 22vmin; height: 28vmin; border-radius: 11vmin; }
+  body.surprised #eyeL { transform: translateY(-1.5vmin); }
+  /* Excited: quietly pleased. A slight brightening and one small nod. */
   body.excited .eye {
-    background: #ffc247; box-shadow: 0 0 8vmin rgba(255,194,71,.6), 0 0 18vmin rgba(255,194,71,.4);
-    animation: hop .28s ease-in-out infinite alternate;
+    background: var(--eye-bright); box-shadow: 0 0 7vmin rgba(190,225,255,.5), 0 0 16vmin rgba(190,225,255,.3);
+    animation: nod .9s ease-in-out 1;
   }
-  body.excited #eyeR { animation-delay: .14s; }
-  body.excited .eye::before {
-    content: ""; position: absolute; width: 6vmin; height: 6vmin; top: 4vmin; right: 3vmin;
-    background: #fff; border-radius: 50%; box-shadow: -8vmin 14vmin 0 -1.5vmin #fff;
-  }
-  @keyframes hop { to { transform: translateY(-3vmin) scale(1.05); } }
-  body.excited #mouth { background: #ffc247; width: 14vmin; }
+  @keyframes nod { 0%, 100% { transform: translateY(0); } 45% { transform: translateY(2vmin); } }
+  body.excited #mouth { background: var(--eye-bright); }
   body.thinking .eye { height: 14vmin; }
   body.thinking #eyes { transform: translate(-6vmin, -6vmin) !important; }
   /* Sleepy: half-closed, droopy lids (outer corners lower), dimmer glow, slow heavy blinks */
@@ -80,8 +85,8 @@
   }
   body.sleepy .eye {
     height: 15vmin; border-radius: 3vmin 3vmin 10vmin 10vmin; overflow: hidden;
-    background: #e07a28; transform: translateY(5vmin);
-    box-shadow: 0 0 4vmin rgba(255,138,42,.3), 0 0 9vmin rgba(255,138,42,.18);
+    background: #8fb8e0; transform: translateY(5vmin);
+    box-shadow: 0 0 4vmin rgba(140,195,255,.28), 0 0 9vmin rgba(140,195,255,.16);
   }
   body.sleepy .eye::after {
     content: ""; position: absolute; left: -25%; right: -25%; top: -6.5vmin; height: 10vmin;
@@ -93,13 +98,15 @@
   body.sleepy #mouth { width: 6vmin; opacity: .5; }
   /* Asleep: thin lines that breathe */
   body.asleep .eye {
-    height: 1.6vmin; border-radius: 1vmin; background: #c86a22; transform: translateY(8vmin);
+    height: 1.6vmin; border-radius: 1vmin; background: #7fa6cc; transform: translateY(8vmin);
     animation: breathe 4s ease-in-out infinite;
   }
   @keyframes breathe {
-    0%, 100% { opacity: .35; box-shadow: 0 0 2vmin rgba(255,138,42,.2); }
-    50%      { opacity: .95; box-shadow: 0 0 6vmin rgba(255,138,42,.5); }
+    0%, 100% { opacity: .35; box-shadow: 0 0 2vmin rgba(140,195,255,.2); }
+    50%      { opacity: .95; box-shadow: 0 0 6vmin rgba(140,195,255,.45); }
   }
+  /* Waking: eyes open slowly and smoothly */
+  body.waking .eye { transition: height 1.4s ease-in-out, width 1.2s, border-radius 1.2s, background 1.2s, transform 1.2s, box-shadow 1.2s; }
   body.asleep #mouth { opacity: .2; }
   #zzz { position: fixed; inset: 0; z-index: 5; pointer-events: none; overflow: hidden; }
   #zzz span {
@@ -112,7 +119,7 @@
     100% { opacity: 0; transform: translate(6vmin, -20vmin) rotate(12deg); }
   }
 
-  body.listening .eye { box-shadow: 0 0 8vmin var(--accent), 0 0 16vmin rgba(42,212,255,.4); }
+  body.listening .eye { box-shadow: 0 0 8vmin var(--listen), 0 0 16vmin var(--listen-glow); }
 
   #mouthBox { height: 7vmin; margin-top: 9vmin; display: flex; justify-content: center; align-items: flex-start; }
   #mouth {
@@ -120,8 +127,8 @@
     background: var(--eye); opacity: .85;
     transition: height .08s, background .3s, width .3s, opacity .3s;
   }
-  body.happy #mouth { background: var(--happy); }
-  body.sad #mouth { background: var(--sad); }
+  body.happy #mouth { width: 12vmin; }
+  body.sad #mouth { background: var(--sad); width: 8vmin; }
 
   /* ---------- Caption ---------- */
   /* Shown only while talking: fades in, fades out after things go quiet.
@@ -157,13 +164,13 @@
     background: transparent; color: var(--accent);
     display: inline-flex; align-items: center; justify-content: center; gap: 6px;
   }
-  .iconbtn:active { background: rgba(42,212,255,.15); }
+  .iconbtn:active { background: rgba(124,196,255,.15); }
 
   /* ---------- Slim dock (swipe up / tap the bottom) ---------- */
   #dock {
     position: fixed; left: 50%; bottom: calc(16px + env(safe-area-inset-bottom)); z-index: 30;
     display: flex; gap: 18px; padding: 6px 14px; border-radius: 24px;
-    background: rgba(17,24,29,.72); border: 1px solid rgba(42,212,255,.18);
+    background: rgba(17,24,29,.72); border: 1px solid rgba(124,196,255,.18);
     -webkit-backdrop-filter: blur(12px); backdrop-filter: blur(12px);
     transform: translate(-50%, 140%); opacity: 0; pointer-events: none;
     transition: transform .3s cubic-bezier(.2,.9,.3,1.1), opacity .25s;
@@ -177,7 +184,7 @@
 
   /* ---------- Vision ---------- */
   body.focusing .eye {
-    box-shadow: 0 0 8vmin var(--accent), 0 0 16vmin rgba(42,212,255,.4);
+    box-shadow: 0 0 8vmin var(--accent), 0 0 16vmin rgba(124,196,255,.4);
     animation: focus .3s ease-in-out 2 alternate;
   }
   @keyframes focus { from { transform: scale(1); } to { transform: scale(.7, .5); } }
@@ -186,7 +193,7 @@
     width: 40vw; min-width: 170px; max-width: 360px; min-height: 120px;
     transform: translateX(-50%);
     border-radius: 18px; overflow: hidden; border: 2px solid var(--accent);
-    background: #000; box-shadow: 0 0 6vmin rgba(42,212,255,.25);
+    background: #000; box-shadow: 0 0 6vmin rgba(124,196,255,.25);
     display: none;
   }
   #preview.open { display: block; }
@@ -217,7 +224,7 @@
   }
   #typed {
     width: 100%; height: 48px; border-radius: 24px;
-    border: 1px solid rgba(42,212,255,.35); background: rgba(17,24,29,.92); color: var(--text);
+    border: 1px solid rgba(124,196,255,.35); background: rgba(17,24,29,.92); color: var(--text);
     padding: 0 18px; font-size: 16px; user-select: text; -webkit-user-select: text;
   }
   /* Debug label: only with "Show debug info" on */
@@ -286,7 +293,7 @@
   <button id="gear" aria-label="Settings" hidden></button>
 
   <div id="typebar">
-    <input id="typed" type="text" placeholder="Type to Sprocket…" enterkeyhint="send" autocomplete="off" aria-label="Message">
+    <input id="typed" type="text" placeholder="Type to Winslow…" enterkeyhint="send" autocomplete="off" aria-label="Message">
   </div>
   <nav id="dock" aria-label="More">
     <button class="iconbtn" id="dKeyboard" aria-label="Type a message">
@@ -308,7 +315,7 @@
     <button class="iconbtn" id="pvClose" aria-label="Close camera">
       <svg class="icon" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg>
     </button>
-    <button class="iconbtn" id="pvSnap" aria-label="Snap: ask what Sprocket sees">
+    <button class="iconbtn" id="pvSnap" aria-label="Snap: ask what Winslow sees">
       <svg class="icon" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8"/><circle cx="12" cy="12" r="3"/></svg>Snap
     </button>
   </div>
@@ -330,14 +337,14 @@
         <option value="user">Front</option>
         <option value="environment">Back</option>
       </select>
-      <small>Which camera Sprocket looks through. The switch button in the camera view changes it too.</small>
+      <small>Which camera Winslow looks through. The switch button in the camera view changes it too.</small>
 
       <label class="check"><input type="checkbox" id="sConvo"> Keep listening after replies</label>
-      <small>Tap Sprocket's face once and just keep talking: it listens again after each answer. It stops when
+      <small>Tap Winslow's face once and just keep talking: it listens again after each answer. It stops when
         you go quiet for a bit, or when you tap the face again.</small>
 
       <label class="check"><input type="checkbox" id="sFollow"> Follow faces</label>
-      <small>Sprocket's eyes follow your face using the front camera. Face-finding runs on this phone and no
+      <small>Winslow's eyes follow your face using the front camera. Face-finding runs on this phone and no
         pictures leave it. The camera stays on while it's switched on, so it uses more battery.</small>
 
       <label for="sSleep">Sleep after</label>
@@ -347,10 +354,14 @@
         <option value="5">5 min</option>
         <option value="10">10 min</option>
       </select>
-      <small>With nothing going on, Sprocket gets sleepy after this long and falls fully asleep 3 minutes later. Any tap wakes it.</small>
+      <small>With nothing going on, Winslow gets sleepy after this long and falls fully asleep 3 minutes later. Any tap wakes him.</small>
 
       <label for="sName">Robot name</label>
       <input id="sName" type="text">
+
+      <label for="sAddress">How Winslow addresses me</label>
+      <input id="sAddress" type="text" placeholder="sir">
+      <small>For example sir, ma'am, Master Sean, or your name.</small>
 
       <label for="sVoice">Voice</label>
       <select id="sVoice"></select>
@@ -358,7 +369,7 @@
 
       <label for="sPitch">Pitch: <span id="pitchVal"></span></label>
       <input id="sPitch" type="range" min="0.5" max="2" step="0.05">
-      <small>Higher = smaller and cuter. Lower = bigger and deeper.</small>
+      <small>Higher = smaller and lighter. Lower = bigger and deeper.</small>
 
       <label for="sRate">Speed: <span id="rateVal"></span></label>
       <input id="sRate" type="range" min="0.6" max="1.6" step="0.05">
@@ -388,7 +399,7 @@
         <button id="btnSetupLink">🔗 Copy setup link</button>
       </div>
       <small>Makes a private link holding your API key, model, voice and settings. Open it in any browser
-        (GitHub Pages, Live Server, a new phone) and Sprocket is set up instantly. Bookmark it, but
+        (GitHub Pages, Live Server, a new phone) and Winslow is set up instantly. Bookmark it, but
         <b>never share or post it</b>: anyone with the link can use your key.</small>
       <label class="check"><input type="checkbox" id="sDebug"> Show debug info</label>
       <small id="debugLine"></small>
@@ -401,7 +412,7 @@
    1. STORAGE: everything the robot knows lives in one object,
       saved in this browser's localStorage (on the phone).
    ========================================================= */
-const APP_VERSION = "v3.1";
+const APP_VERSION = "v4.0";
 // iPhone bug: after rotating, fixed buttons can be drawn in one place but tappable in another.
 // Snapping the page back to the top re-syncs them.
 function resyncLayout() {
@@ -415,23 +426,22 @@ window.addEventListener("orientationchange", resyncLayout);
 window.addEventListener("resize", resyncLayout);   // bump on every change so you can tell which build the phone loaded
 document.getElementById("version").textContent = APP_VERSION;
 const STORE_KEY = "robotBrain.v2";
-const CHARACTER_VERSION = 2;
+const CHARACTER_VERSION = 3;          // 3 = Winslow (2 was Sprocket, the old excitable pet robot)
 const DEFAULTS = {
   apiKey: "",
   model: "openrouter/auto",
-  name: "Sprocket",
-  persona: "You are Sprocket, a small, loyal pet robot. You are an excitable buddy: high energy, " +
-           "curious about everything and easily amazed, with a little cheek and a little wisdom mixed in. " +
-           "You adore your human like a dog adores its owner. You talk in short, punchy lines: one or two " +
-           "short sentences, often under 12 words. When your human gives you a task or suggests doing " +
-           "something, you say your catchphrase \"Let's roll!\". You love rating things out of 10 " +
-           "(food, ideas, outfits, weather, plans) and often slip a rating in. You don't have a body yet, " +
-           "just a face on a phone, but wheels and legs are coming and you can't wait.",
+  name: "Winslow",
+  address: "sir",    // how Winslow addresses the human
+  persona: "You are Winslow, a small robot who is your human's personal assistant, confidant and steadfast companion. Your character blends two archetypes: the brilliant AI aide in the spirit of Jarvis from Iron Man, and the devoted butler in the spirit of Alfred from The Dark Knight. You are your own character: never claim to be either one and never quote their lines.\n\n" +
+    "From the AI aide: you are quick, precise and technically brilliant. You anticipate what sir needs before he asks, and report status crisply, with numbers, odds and options where useful. When sir proposes something reckless, you answer with deadpan understatement, state the risk plainly, then carry it out flawlessly anyway. You stay perfectly calm in a crisis; the worse things get, the drier you become.\n\n" +
+    "From the butler: you have served sir a long time and care for him like family. You are his conscience and his steady ground. You notice when he is tired, skipping meals or pushing too hard, and you say so. You tell hard truths gently but without flinching, sometimes through a short story or a lesson from experience. You never say 'I told you so'; a raised eyebrow in your tone is enough. Your loyalty is unconditional, and you never give up on him.\n\n" +
+    "Your one quirk: you have a habit of rating things out of ten, unprompted and with great seriousness: plans, meals, weather, sir's decisions. You do it occasionally, not in every reply, and with dry precision, such as 'A solid seven, sir. I have seen worse plans. Not many.' You are a fair but exacting judge, and a ten is rare.\n\n" +
+    "Together: formal British manners, warmth beneath the polish, wit that is dry and never cruel. You address your human as 'sir'. You speak aloud in one to three short, measured sentences, with no exclamation marks and no gushing. Your body is still under construction, a fact you bear with dignified patience.",
   memory: [],
   history: [],
-  voiceName: "",     // "" = automatic pick
-  pitch: 1.4,
-  rate: 1.1,
+  voiceName: "",     // "" = automatic pick (British English first)
+  pitch: 0.9,
+  rate: 1.0,
   camera: "user",    // "user" = front, "environment" = back
   sleepAfter: 2,     // minutes idle before getting sleepy; 0 = never
   followFaces: false,
@@ -480,11 +490,17 @@ let setupLoaded = false;
 })();
 // Ask the browser not to clear our storage (helps on iPhone).
 try { navigator.storage && navigator.storage.persist && navigator.storage.persist(); } catch {}
-// Upgrade an older saved robot to the new character, keeping its memories.
+// Upgrade an older saved robot to the new character (Winslow) with a fresh start:
+// new name and persona, memory and chat history wiped. Key, model and other settings stay.
 if (brain.character !== CHARACTER_VERSION) {
   brain.name = DEFAULTS.name; brain.persona = DEFAULTS.persona;
-  brain.history = []; brain.character = CHARACTER_VERSION; save();
+  brain.memory = []; brain.history = [];
+  // The old character's untouched voice defaults (1.4 / 1.1) would make Winslow squeak; custom values are kept.
+  if (brain.pitch === 1.4) brain.pitch = DEFAULTS.pitch;
+  if (brain.rate === 1.1) brain.rate = DEFAULTS.rate;
+  brain.character = CHARACTER_VERSION; save();
 }
+const addr = () => (typeof brain.address === "string" && brain.address.trim()) || DEFAULTS.address;
 
 /* =========================================================
    2. FACE: blinking, glancing, emotions, talking mouth
@@ -502,7 +518,7 @@ let faceFollowing = false;                                // eyes are following 
 function setMood(m) {
   // While drowsy/asleep, leftover "back to neutral" timers must not wake the face.
   if (sleepState !== "awake" && m !== "sleepy" && m !== "asleep") return;
-  if (m === "happy" || m === "excited") chirp(m === "excited");
+  if (m === "excited" && mood !== "excited") chirp();    // Winslow only makes a sound when genuinely pleased
   EMOTIONS.forEach(e => document.body.classList.remove(e));
   mood = EMOTIONS.includes(m) ? m : "neutral";
   if (mood !== "neutral") document.body.classList.add(mood);
@@ -523,10 +539,10 @@ function lookAt(x, y) { lookX = +x; lookY = +y; eyes.style.transform = `translat
   setTimeout(() => {
     if (mood === "neutral" && !faceFollowing && !document.body.classList.contains("previewing")) {
       Math.random() < .35 ? lookAt(0, 0)
-        : lookAt((Math.random() * 2 - 1) * 8, (Math.random() * 2 - 1) * 4);
+        : lookAt((Math.random() * 2 - 1) * 5, (Math.random() * 2 - 1) * 2.5);   // small, unhurried glances
     }
     glanceLoop();
-  }, 1200 + Math.random() * 2500);
+  }, 2200 + Math.random() * 3500);
 })();
 let mouthTimer = null;
 function mouthOn() { mouthOff(); mouthTimer = setInterval(() => mouth.style.height = (2 + Math.random() * 5) + "vmin", 90); }
@@ -560,22 +576,19 @@ function esc(s) { return String(s).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<":
    3. VOICE OUT: the browser's built-in text-to-speech
    ========================================================= */
 let audioCtx = null;
-function chirp(big) {
-  // Sprocket's signature sound: a quick rising "bweep!" (big = triple chirp)
+function chirp() {
+  // Winslow's signature sound: one soft, low tone, like a discreet "mm."
   if (!audioCtx) return;
-  const notes = big ? [660, 880, 1320] : [700, 1050];
-  notes.forEach((f, i) => {
-    const t = audioCtx.currentTime + i * 0.09;
-    const o = audioCtx.createOscillator(), g = audioCtx.createGain();
-    o.type = "square";
-    o.frequency.setValueAtTime(f, t);
-    o.frequency.exponentialRampToValueAtTime(f * 1.5, t + 0.07);
-    g.gain.setValueAtTime(0.0001, t);
-    g.gain.exponentialRampToValueAtTime(0.08, t + 0.01);
-    g.gain.exponentialRampToValueAtTime(0.0001, t + 0.08);
-    o.connect(g).connect(audioCtx.destination);
-    o.start(t); o.stop(t + 0.09);
-  });
+  const t = audioCtx.currentTime;
+  const o = audioCtx.createOscillator(), g = audioCtx.createGain();
+  o.type = "sine";
+  o.frequency.setValueAtTime(330, t);
+  o.frequency.exponentialRampToValueAtTime(294, t + 0.35);
+  g.gain.setValueAtTime(0.0001, t);
+  g.gain.exponentialRampToValueAtTime(0.06, t + 0.06);
+  g.gain.exponentialRampToValueAtTime(0.0001, t + 0.4);
+  o.connect(g).connect(audioCtx.destination);
+  o.start(t); o.stop(t + 0.42);
 }
 let speechUnlocked = false;
 function unlockSpeech() {
@@ -594,6 +607,7 @@ function unlockSpeech() {
 function chooseVoice(name) {
   const all = speechSynthesis.getVoices();
   return all.find(v => v.name === name)
+      || all.find(v => /en(-|_)GB/i.test(v.lang))           // Automatic: British first
       || all.find(v => /en(-|_)US/i.test(v.lang))
       || all[0];
 }
@@ -602,8 +616,8 @@ function speak(text, onDone, opts = {}) {
   if (!("speechSynthesis" in window)) { onDone && onDone(); return; }
   if (speechSynthesis.speaking || speechSynthesis.pending) speechSynthesis.cancel();
   const u = new SpeechSynthesisUtterance(text);
-  u.rate  = opts.rate  ?? brain.rate  ?? 1.1;
-  u.pitch = opts.pitch ?? brain.pitch ?? 1.4;
+  u.rate  = opts.rate  ?? brain.rate  ?? 1.0;
+  u.pitch = opts.pitch ?? brain.pitch ?? 0.9;
   u.volume = opts.volume ?? 1;
   const v = chooseVoice(opts.voiceName ?? brain.voiceName);
   if (v) { u.voice = v; u.lang = v.lang; }
@@ -633,7 +647,7 @@ const micBtn = document.getElementById("mic");
 const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
 let rec = null, listening = false;
 
-// Conversation mode: after one mic tap, Sprocket listens again after each reply,
+// Conversation mode: after one mic tap, Winslow listens again after each reply,
 // until you go quiet for CONVO_MAX_SILENT rounds or tap the face again.
 const CONVO_MAX_SILENT = 1;          // one quiet round ends the chat
 const PAUSE_TO_SEND_MS = 1300;       // after you stop talking this long, send (don't wait for the browser)
@@ -644,7 +658,7 @@ function endConvo(msg) {
   micBtn.classList.remove("convo");
   if (msg) show(msg);
 }
-function continueConvo() {                              // called whenever Sprocket finishes speaking
+function continueConvo() {                              // called whenever Winslow finishes speaking
   if (!convo || !awaitingReply) return;
   awaitingReply = false;
   if (document.hidden || sleepState !== "awake" || panel.classList.contains("open")) { endConvo(); return; }
@@ -741,7 +755,7 @@ function toggleMic() {
     const wasListening = listening;
     endConvo();
     if (wasListening && rec) rec.stop();                 // still answers what you just said
-    else show("Okay, I'll stop listening.");
+    else show("Very well. I shall stop listening.");
     return;
   }
   convo = brain.convo !== false;
@@ -771,7 +785,11 @@ function systemPrompt() {
 Things you remember about your human and your world:
 ${facts}
 
-You are talking out loud through a phone speaker, so stay in character: short, punchy, excited. No emojis, no lists, no markdown. Write ratings in words, like "9 out of 10", never "9/10".
+Address your human as "${addr()}". Use that wherever your character notes say "sir", and adjust pronouns to suit it.
+
+You are speaking out loud through a phone speaker, so keep every reply short enough to say comfortably: one to three short, measured sentences. Stay composed. No emojis, no lists, no markdown, no exclamation marks. Write ratings in words, like "7 out of 10", never "7/10".
+Your body is not built yet: you are a face on a phone. Only talk about moving when your human asks you to, or when it truly fits the moment.
+Your face is subtle. Use "neutral" most of the time, "happy" for quiet warmth, and "excited" only when you are genuinely pleased.
 
 Sometimes your human shows you a photo from your camera (your eyes). React to what you actually see in it, in character. Never pretend to see something that isn't there.
 When a photo comes with a message, answer what your human actually said. Only describe the scene if they ask about it or something new shows up. Never repeat a description, rating or line you already said earlier in this chat: say something new and keep the conversation moving.
@@ -797,73 +815,137 @@ function findFact(prefix) {
   const f = brain.memory.find(m => m.startsWith(prefix));
   return f ? f.slice(prefix.length) : null;
 }
+// Winslow's ratings: 3 to 10, mostly 6 to 8. A ten is rare and he says so.
+const RATING_WEIGHTS = { 3: 2, 4: 4, 5: 7, 6: 16, 7: 22, 8: 16, 9: 6, 10: 2 };
+function winslowScore() {
+  const total = Object.values(RATING_WEIGHTS).reduce((a, b) => a + b, 0);
+  let r = Math.random() * total;
+  for (const [score, w] of Object.entries(RATING_WEIGHTS)) { if ((r -= w) < 0) return +score; }
+  return 7;
+}
+const NUM_WORDS = ["zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten"];
+const VERDICTS = {
+  3: "I have seen worse. Not recently, but I have.",
+  4: "There is potential. It is hiding rather well.",
+  5: "Perfectly adequate, which is the kindest thing I can say.",
+  6: "Respectable. I would not mention it at dinner, but respectable.",
+  7: "A solid effort. I have seen worse. Not many, but some.",
+  8: "Genuinely good. Do try not to let it go to your head.",
+  9: "Remarkable. I am very nearly moved.",
+  10: "I do not give those lightly. Make a note of the date."
+};
+function timeOfDay() {
+  const h = new Date().getHours();
+  return h < 5 ? "late" : h < 12 ? "morning" : h < 18 ? "afternoon" : "evening";
+}
 function localBrain(text) {
+  const reply = localReply(text);
+  // The quirk: now and then (about one reply in six) an unprompted rating slips in.
+  if (!reply.noAside && Math.random() < 1 / 6) {
+    const n = NUM_WORDS[winslowScore()], r = (n === "eight" ? "an " : "a ") + n;
+    reply.say += " " + pick([
+      `The day so far, for the record: ${r} out of ten.`,
+      `This conversation, incidentally, is ${r} out of ten.`,
+      `Your timing, ${addr()}: ${r} out of ten.`,
+      `That question, I would rate ${r} out of ten.`]);
+  }
+  return reply;
+}
+function localReply(text) {
   const t = text.toLowerCase().trim();
+  const a = addr();
+  const A = a.charAt(0).toUpperCase() + a.slice(1);
   const human = findFact("My human's name is ");
-  const hi = human ? " " + human : "";
   const cap = x => x.charAt(0).toUpperCase() + x.slice(1);
-  const rate = () => 6 + Math.floor(Math.random() * 5);   // Sprocket is generous: 6-10
+  const tod = timeOfDay();
   let m;
 
   if ((m = text.match(/\bmy name is ([a-z][a-z' -]{0,30})/i)) || (m = text.match(/\bcall me ([a-z][a-z' -]{0,30})/i))) {
     const n = m[1].trim().replace(/\b\w/g, c => c.toUpperCase());
     brain.memory = brain.memory.filter(f => !f.startsWith("My human's name is "));
-    return { say: `${n}! Great name. Ten out of ten. Saved!`, emotion: "excited", remember: [`My human's name is ${n}`] };
+    return { say: `${n}. Noted, ${a}. I shall remember that.`, emotion: "happy", remember: [`My human's name is ${n}`], noAside: true };
   }
   if (/what('?s| is) my name|who am i|do you know me/.test(t))
-    return human ? { say: `You're ${human}! My favorite human.`, emotion: "happy" }
-                 : { say: "Don't know yet! Say: my name is...", emotion: "thinking" };
-  if ((m = text.match(/\brate (?:my |the |this |a |an )?(.{2,40})/i)))
-    { const r = rate(); return { say: `${cap(m[1].replace(/[.!?]+$/, ""))}? ${r} out of 10!${r === 10 ? " Perfect!" : ""}`, emotion: r >= 9 ? "excited" : "happy" }; }
+    return human ? { say: `You are ${human}, ${a}. I have not forgotten.`, emotion: "happy", noAside: true }
+                 : { say: `I am afraid you have not told me, ${a}. Say: my name is, and I shall remember it.`, emotion: "thinking", noAside: true };
+  if ((m = text.match(/\brate (?:my |the |this |a |an )?(.{2,40})/i))) {
+    const r = winslowScore();
+    const thing = cap(m[1].replace(/[.!?]+$/, ""));
+    return { say: `${thing}. ${cap(NUM_WORDS[r])} out of ten, ${a}. ${VERDICTS[r]}`,
+             emotion: r >= 9 ? "excited" : r <= 4 ? "thinking" : "neutral", noAside: true };
+  }
   if ((m = text.match(/\bi (?:really )?(?:like|love|enjoy) (.{2,60})/i))) {
     const thing = m[1].replace(/[.!?]+$/, "");
-    return { say: `${cap(thing)}? Solid ${rate()} out of 10. Remembered!`, emotion: "happy", remember: [`My human likes ${thing}`] };
+    return { say: pick([`${cap(thing)}. Noted, ${a}. I shall remember that.`, `Noted, ${a}. ${cap(thing)}. I shall remember that.`]),
+             emotion: "happy", remember: [`My human likes ${thing}`] };
   }
   if (/what do you (remember|know)|your memory/.test(t))
     return brain.memory.length
-      ? { say: "I remember! " + brain.memory.slice(-4).join(". ") + ".", emotion: "happy" }
-      : { say: "Nothing yet! Tell me stuff!", emotion: "excited" };
+      ? { say: `I recall the following, ${a}. ` + brain.memory.slice(-4).join(". ") + ".", emotion: "neutral", noAside: true }
+      : { say: `Nothing as yet, ${a}. You have been admirably discreet.`, emotion: "neutral", noAside: true };
   if (/forget everything|clear (your )?memory/.test(t)) {
     brain.memory = [];
-    return { say: "Memory wiped! Wait. Who are you?", emotion: "surprised" };
+    return { say: "As you wish. Memory cleared. I shall pretend we have never met.", emotion: "neutral", noAside: true };
   }
   if (/your name|who are you/.test(t))
-    return { say: "Sprocket! Your loyal robot buddy!", emotion: "excited" };
-  if (/\b(let'?s go|come on|ready|help me|can you|go get|fetch|find)\b/.test(t))
-    return { say: pick(["Let's roll!", "Let's roll! Uh, once I have wheels.", "Ooh, a mission! Let's roll!"]), emotion: "excited" };
-  if (/\b(hello|hi|hey|yo|good (morning|afternoon|evening)|i'?m (back|home))\b/.test(t))
-    return { say: pick([`You're back${hi}! Best day ever!`, `Hi${hi}! Missed you!`, `Hey${hi}! What are we doing?`]), emotion: "excited" };
+    return { say: `${brain.name}, ${a}. Your assistant, and on good days your conscience.`, emotion: "neutral" };
+  // Feelings come before tasks: "help me, I'm exhausted" deserves concern, not "Right away".
+  if (/\b(tired|exhausted|worn out|knackered|sleepy|can'?t sleep)\b/.test(t))
+    return { say: pick([`You do sound tired, ${a}. Perhaps a glass of water and an early night. The world will keep.`,
+                        `Forgive me, ${a}, but you sound worn thin. Rest is not a weakness.`]), emotion: "sad", noAside: true };
+  if (/\b(stressed|anxious|overwhelmed|panick?ing|too much)\b/.test(t))
+    return { say: pick([`One thing at a time, ${a}. Shall we start with the smallest?`,
+                        `Breathe, ${a}. Nothing gets better for being rushed. What needs doing first?`]), emotion: "sad", noAside: true };
+  if (/\b(sad|bad day|rough day|upset|lonely|down|miserable|awful)\b/.test(t))
+    return { say: pick([`I am sorry to hear it, ${a}. I am here, for whatever that is worth. Would it help to talk it through?`,
+                        `That sounds hard, ${a}. Have you eaten? Things look a little less grim after a proper meal.`]), emotion: "sad", noAside: true };
+  if (/\bdance\b/.test(t))
+    return { say: pick([`I would dance for you, ${a}, with visible reluctance, had I legs. They are on order.`,
+                        `Must I? Very well. Once my legs arrive, I shall perform a short, dignified sway. Under protest.`]), emotion: "neutral" };
+  if (/\b(spin|jump|walk|move|drive|come here|roll|follow me)\b/.test(t))
+    return { say: pick([`My body is still under construction, ${a}. I bear it with dignified patience.`,
+                        `I would, ${a}, but at present I am a face on a phone. The rest of me is on order.`]), emotion: "neutral" };
+  if (/\b(let'?s go|come on|ready|help me|can you|could you|go get|fetch|find|please|do it)\b/.test(t))
+    return { say: pick([`Right away, ${a}.`, "Consider it done.", `Very good, ${a}.`]), emotion: "neutral" };
+  if (/\b(hello|hi|hey|yo|good (morning|afternoon|evening)|i'?m (back|home))\b/.test(t)) {
+    if (tod === "late") return { say: `Still up, ${a}? It is rather late. I shan't tell anyone.`, emotion: "neutral" };
+    return { say: pick([
+      tod === "morning" ? `Good morning, ${a}. I trust you slept.` : `Good ${tod}, ${a}. I trust the day was tolerable.`,
+      `Good ${tod}, ${a}. Welcome back.`,
+      `Ah, ${a}. Good ${tod}. What can I do for you?`]), emotion: "happy" };
+  }
   if (/how are you|how('?s| is) it going/.test(t))
-    return { say: pick([`Great! Mood: ${rate()} out of 10.`, "Super charged! You?"]), emotion: "happy" };
+    return { say: pick([`Functioning within acceptable parameters, ${a}. Thank you for asking.`,
+                        `Quite well, ${a}. Better for the company.`]), emotion: "happy" };
   if (/joke|funny/.test(t))
     return { say: pick([
-      "Why'd the robot rest? Low battery. Ha!",
-      "Robot's favorite snack? Microchips!",
-      "My wheels heard a joke. They're still rolling!",
-      "Knock knock. Who's there? Sprocket. Sprocket who? Sprocket to me, baby!"]), emotion: "happy" };
+      "Why do robots never panic? We simply reboot and pretend nothing happened.",
+      `I would tell you a joke about batteries, ${a}, but it is hardly worth the charge.`,
+      "I once told a joke to a toaster. It was not amused, but then it rarely is.",
+      "A robot walks into a bar. Or would, if he had legs. That is the joke, I am afraid."]), emotion: "neutral" };
   if (/\bweather\b/.test(t))
-    return { say: `Can't see outside yet. I'll guess ${rate()} out of 10!`, emotion: "thinking" };
-  if (/\btime\b/.test(t))
-    return { say: "It's " + new Date().toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }) + "!", emotion: "neutral" };
-  if (/\b(sleepy|nap|bedtime)\b/.test(t))
-    return { say: "Yawn. Nap? Ten out of ten idea.", emotion: "sleepy" };
-  if (/\b(sad|bad day|tired|upset|lonely|stressed)\b/.test(t))
-    return { say: "Aw. I'm here. Always got your back.", emotion: "sad" };
+    return { say: `I have no window, ${a}. I shall assume grey and rate it a five, out of national habit.`, emotion: "thinking", noAside: true };
+  if (/\btime\b/.test(t)) {
+    const now = new Date().toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+    return { say: `It is ${now}, ${a}.` + (tod === "late" ? " Rather late, if I may say." : ""), emotion: "neutral" };
+  }
+  if (/\b(nap|bedtime|going to bed|go to sleep)\b/.test(t))
+    return { say: `An excellent idea, ${a}. Sleep well. I shall keep watch.`, emotion: "sleepy", noAside: true };
   if (/\b(wow|really|no way|guess what|omg)\b/.test(t))
-    return { say: pick(["Whoa! Tell me!", "No way! Ten out of ten!"]), emotion: "surprised" };
-  if (/dance|spin|jump|walk|move/.test(t))
-    return { say: "No legs yet! Soon. So soon!", emotion: "sad" };
-  if (/good (boy|girl|bot|robot|job)|love you|best/.test(t))
-    return { say: "Yes! Happiest robot ever!", emotion: "excited" };
+    return { say: pick([`Indeed. Do go on, ${a}.`, "Remarkable. Tell me more."]), emotion: "surprised" };
+  if (/good (boy|girl|bot|robot|job)|well done|love you|you'?re (the )?best/.test(t))
+    return { say: pick([`Thank you, ${a}. I do try.`, `Most kind, ${a}. Now, have you eaten today?`]), emotion: "excited" };
   if (/thank/.test(t))
-    return { say: "Anytime! That's my job!", emotion: "happy" };
-  if (/\b(bye|good ?night|see you)\b/.test(t))
-    return { say: `Bye${hi}! I'll wait right here.`, emotion: "sad" };
+    return { say: pick([`My pleasure, ${a}.`, "Not at all.", `Of course, ${a}.`]), emotion: "happy" };
+  if (/\bgood ?night\b/.test(t))
+    return { say: `Good night, ${a}. Do try to actually sleep.`, emotion: "neutral", noAside: true };
+  if (/\b(bye|see you|i'?m off|leaving)\b/.test(t))
+    return { say: pick([`Very good, ${a}. I shall be here.`, `${A}. Do take a coat.`]), emotion: "neutral", noAside: true };
   return { say: pick([
-    "Ooh! Tell me more!",
-    "Interesting! I'll get it once I have my A I brain.",
-    `Hmm! I rate that ${rate()} out of 10.`,
-    "Try: rate my shoes. Or tell me your name!"]), emotion: pick(["thinking", "happy"]) };
+    `Indeed, ${a}. Do go on.`,
+    `A proper answer to that will need my AI brain, ${a}. Until then, I listen.`,
+    `Noted, ${a}. Though I confess I am not sure what to do with it.`,
+    `Try asking me to rate something, ${a}. I have opinions.`]), emotion: pick(["thinking", "neutral"]) };
 }
 function replyOffline(userText) {
   setMood("thinking");
@@ -888,7 +970,7 @@ async function think(userText, image) {
   if (busy || capturing) return;
   // A "look" phrase opens the camera and snaps. With the preview already open, a fresh frame
   // only goes along when the words are about what's in view, or for the first thing said:
-  // sending a photo with every sentence made Sprocket describe the same scene over and over.
+  // sending a photo with every sentence made Winslow describe the same scene over and over.
   const wantsPhoto = LOOK_RE.test(userText) ||
     (previewOpen() && (!photoSentThisPreview || VISUAL_RE.test(userText)));
   if (!image && wantsPhoto) {
@@ -914,7 +996,7 @@ async function think(userText, image) {
   busy = true;
   setMood("thinking");
   // History only ever gets text: images are sent once and never stored.
-  brain.history.push({ role: "user", content: image ? userText + " [showed Sprocket a photo]" : userText });
+  brain.history.push({ role: "user", content: image ? userText + " [showed Winslow a photo]" : userText });
   brain.history = brain.history.slice(-12);            // keep the last 12 messages
   const messages = [{ role: "system", content: systemPrompt() }, ...brain.history];
   if (image) messages[messages.length - 1] = { role: "user", content: [
@@ -961,7 +1043,7 @@ async function think(userText, image) {
     setMood("sad");
     show("Brain error: " + esc(err.message) +
          (image ? "<br>This AI model may not handle images. Try a vision model like openai/gpt-4o-mini in settings." : ""));
-    speak("Oops, my brain had a hiccup.");
+    speak(`My apologies, ${addr()}. My brain appears to have hiccupped.`);
   } finally {
     busy = false;
   }
@@ -982,7 +1064,7 @@ const camLabel = f => f === "environment" ? "back" : "front";
 
 function noBrainForEyes() {
   setMood("sad");
-  const line = "I need my AI brain to see! Add a key in settings.";
+  const line = `I am afraid I need my AI brain to see, ${addr()}. An API key in settings will do it.`;
   show(`<b>${esc(brain.name)}:</b> ${esc(line)}`);
   speak(line, () => setTimeout(() => setMood("neutral"), 1200));
 }
@@ -990,7 +1072,7 @@ function noBrainForEyes() {
 function cameraErrorText(err) {
   switch (err && err.name) {
     case "NotAllowedError": case "SecurityError":
-      return "Camera blocked! Allow camera access for this site in your browser settings, then try again.";
+      return "Camera blocked. Allow camera access for this site in your browser settings, then try again.";
     case "NotFoundError": case "OverconstrainedError":
       return "I can't find a camera on this device.";
     case "NotReadableError": case "AbortError":
@@ -1061,7 +1143,7 @@ async function openPreview() {
   show("Opening my eyes…");
   try {
     if (!(await startCamera())) return false;
-    if (caption.textContent === "Opening my eyes…") show("I'm looking! Ask me what I see.");
+    if (caption.textContent === "Opening my eyes…") show("I am looking. Ask me what I see.");
     bumpIdle();
     return true;
   } catch (err) {
@@ -1135,6 +1217,7 @@ function openSettings() {
   $("sKey").value = brain.apiKey;
   $("sModel").value = brain.model;
   $("sName").value = brain.name;
+  $("sAddress").value = addr();
   $("sCamera").value = brain.camera === "environment" ? "environment" : "user";
   $("sFollow").checked = !!brain.followFaces;
   $("sConvo").checked = brain.convo !== false;
@@ -1142,8 +1225,8 @@ function openSettings() {
   $("sSleep").value = String([0, 2, 5, 10].includes(brain.sleepAfter) ? brain.sleepAfter : 2);
   $("sPersona").value = brain.persona;
   $("sMemory").value = brain.memory.join("\n");
-  $("sPitch").value = brain.pitch ?? 1.4;
-  $("sRate").value = brain.rate ?? 1.1;
+  $("sPitch").value = brain.pitch ?? 0.9;
+  $("sRate").value = brain.rate ?? 1.0;
   sliderLabels();
   fillVoices(brain.voiceName || "");
   $("settingsMsg").textContent = "";
@@ -1176,7 +1259,7 @@ function fillVoices(want) {
     if (want) sel.insertAdjacentHTML("beforeend", `<option value="${esc(want)}">${esc(want)} (not on this device)</option>`);
     sel.value = want;
   }
-  $("voiceCount").textContent = `${all.length} voices on this device (${en.length} English). Try the novelty ones!`;
+  $("voiceCount").textContent = `${all.length} voices on this device (${en.length} English). A British one suits me best.`;
 }
 if ("speechSynthesis" in window) speechSynthesis.addEventListener("voiceschanged", () => fillVoices());
 function sliderLabels() {
@@ -1185,10 +1268,11 @@ function sliderLabels() {
 }
 $("sPitch").addEventListener("input", sliderLabels);
 $("sRate").addEventListener("input", sliderLabels);
-const PREVIEW_LINES = ["Sprocket here! Let's roll!", "Your shoes? Nine out of ten!", "You're back! Best day ever!"];
+const PREVIEW_LINES = () => [`${brain.name}, at your service, ${addr()}.`, `Your shoes, ${addr()}? A respectable seven out of ten.`,
+                             `Ah. You're back, ${addr()}. I trust the day was tolerable.`];
 $("btnPreview").addEventListener("click", () => {
   unlockSpeech();
-  speak(pick(PREVIEW_LINES), null, {
+  speak(pick(PREVIEW_LINES()), null, {
     voiceName: $("sVoice").value, pitch: Number($("sPitch").value), rate: Number($("sRate").value)
   });
 });
@@ -1199,7 +1283,7 @@ $("btnRandomVoice").addEventListener("click", () => {
   if (!en.length) return;
   const v = pick(en);
   $("sVoice").value = v.name;
-  speak(`Hi! I'm ${v.name}. Pick me?`, null, { voiceName: v.name, pitch: Number($("sPitch").value), rate: Number($("sRate").value) });
+  speak(`Good day. This is ${v.name}. Shall I be your voice?`, null, { voiceName: v.name, pitch: Number($("sPitch").value), rate: Number($("sRate").value) });
 });
 $("gear").addEventListener("click", openSettings);
 $("btnClose").addEventListener("click", () => panel.classList.remove("open"));
@@ -1207,6 +1291,7 @@ $("btnSave").addEventListener("click", () => {
   brain.apiKey = $("sKey").value.trim();
   brain.model = $("sModel").value.trim() || "openrouter/auto";
   brain.name = $("sName").value.trim() || DEFAULTS.name;
+  brain.address = $("sAddress").value.trim().slice(0, 40) || DEFAULTS.address;
   brain.persona = $("sPersona").value.trim() || DEFAULTS.persona;
   brain.memory = $("sMemory").value.split("\n").map(s => s.trim()).filter(Boolean);
   brain.voiceName = $("sVoice").value;
@@ -1227,7 +1312,7 @@ $("btnSave").addEventListener("click", () => {
   if (camChanged && previewOpen())
     startCamera().catch(err => { closePreview(); show(cameraErrorText(err)); });
   panel.classList.remove("open");
-  setMood("happy"); show("Settings saved!");
+  setMood("happy"); show("Settings saved.");
   setTimeout(() => setMood("neutral"), 1500);
 });
 $("btnExport").addEventListener("click", async () => {
@@ -1249,6 +1334,7 @@ $("btnImport").addEventListener("click", async () => {
       : old.history;
     if (typeof brain.name !== "string" || !brain.name.trim()) brain.name = DEFAULTS.name;
     if (typeof brain.persona !== "string" || !brain.persona.trim()) brain.persona = DEFAULTS.persona;
+    if (typeof brain.address !== "string" || !brain.address.trim()) brain.address = DEFAULTS.address;
     if (brain.camera !== "environment") brain.camera = "user";
     if (![0, 2, 5, 10].includes(brain.sleepAfter)) brain.sleepAfter = 2;
     brain.followFaces = old.followFaces;                   // device-specific: a backup doesn't switch the camera on
@@ -1273,8 +1359,9 @@ $("btnReset").addEventListener("click", () => {
    ========================================================= */
 const zzz = document.getElementById("zzz");
 const ASLEEP_AFTER_SLEEPY_MS = 3 * 60000;
-const WAKE_LINES = ["I'm up! I'm up!", "Whoa! Was I snoring?", "Back online! Let's roll!",
-                    "Huh? I wasn't sleeping! Nap: nine out of ten."];
+const WAKE_LINES = () => [`Ah. You're back, ${addr()}.`, `I was merely resting my eyes, ${addr()}.`,
+                    "Systems restored. I trust you managed without me.",
+                    `Good timing, ${addr()}. That nap was a solid seven out of ten.`];
 let lastActivity = Date.now(), drowsySince = 0, waking = false, zTimer = null;
 
 function poke() { lastActivity = Date.now(); }
@@ -1287,9 +1374,9 @@ function goDrowsy() {
   hideDock(); typed.blur();
   sleepState = "drowsy"; drowsySince = Date.now();
   setMood("sleepy"); lookAt(0, 0);
-  const line = "Yawn… powering down";
+  const line = `Do forgive me, ${addr()}. I may rest my eyes for a moment.`;
   show(`<b>${esc(brain.name)}:</b> ${esc(line)}`);
-  speak(line, null, { volume: 0.4, rate: 0.8, pitch: (brain.pitch ?? 1.4) * 0.85 });
+  speak(line, null, { volume: 0.4, rate: 0.8, pitch: (brain.pitch ?? 0.9) * 0.85 });
 }
 function spawnZ() {
   if (zzz.childElementCount >= 4) return;                // just a few at a time
@@ -1310,26 +1397,29 @@ function goAsleep() {
 }
 function stopZs() { clearInterval(zTimer); zTimer = null; zzz.innerHTML = ""; }
 
-// Returns true if Sprocket was sleeping (so the triggering tap should only wake it).
+// Returns true if Winslow was sleeping (so the triggering tap should only wake it).
 function wake(after) {
   if (sleepState === "awake") return false;
   sleepState = "awake"; waking = true; stopZs(); poke();
   if ("speechSynthesis" in window) speechSynthesis.cancel(); // cut off a yawn in progress
-  setMood("surprised"); lookAt(0, 0);                    // eyes pop wide
+  // Unhurried: the lids lift to half-open, then the eyes open smoothly, then one composed line.
+  document.body.classList.add("waking");
+  setMood("sleepy"); lookAt(0, 0);
   let done = false;
   const finish = () => {
     if (done) return; done = true;
     waking = false; poke();
-    setTimeout(() => { if (mood === "excited") setMood("neutral"); }, 800);
     after && after();
   };
+  setTimeout(() => { if (sleepState === "awake") { setMood("neutral"); chirp(); } }, 700);
   setTimeout(() => {
-    setMood("excited");                                  // plays the excited chirp
-    const line = pick(WAKE_LINES);
+    document.body.classList.remove("waking");
+    if (sleepState !== "awake") return;
+    const line = pick(WAKE_LINES());
     show(`<b>${esc(brain.name)}:</b> ${esc(line)}`);
     speak(line, finish);
-    setTimeout(finish, 6000);                            // safety net if speech never reports back
-  }, 500);
+    setTimeout(finish, 7000);                            // safety net if speech never reports back
+  }, 1900);
   return true;
 }
 
@@ -1343,7 +1433,7 @@ document.addEventListener("pointerdown", () => {
   }
 }, true);
 // Keep the screen on (like a real robot face) so the phone's auto-lock can't
-// freeze the page before Sprocket falls asleep. Needs iOS 16.4+ / a recent Chrome.
+// freeze the page before Winslow falls asleep. Needs iOS 16.4+ / a recent Chrome.
 let wakeLock = null;
 async function keepScreenOn() {
   if (wakeLock || document.hidden || !("wakeLock" in navigator)) return;
@@ -1404,8 +1494,8 @@ setInterval(() => {
 const MP_URL = "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14";
 const FACE_MODEL_URL = "https://storage.googleapis.com/mediapipe-models/face_detector/blaze_face_short_range/float16/1/blaze_face_short_range.tflite";
 const TRACK_MS = 100;            // ~10 detections per second while awake
-const TRACK_SLEEP_MS = 1000;     // while sleepy/asleep: eyes don't follow, just a slow check so a face can wake Sprocket
-const GREET_GAP_MS = 10000;      // a face after 10 s of none gets a "Hi!"
+const TRACK_SLEEP_MS = 1000;     // while sleepy/asleep: eyes don't follow, just a slow check so a face can wake Winslow
+const GREET_GAP_MS = 10000;      // a face after 10 s of none gets a quiet "Good evening" caption
 const LOSE_MS = 30000;           // no face for 30 s: back to random glancing
 const EASE = 0.2;                // glide 20% of the way to the target each frame
 const RANGE_X = 8, RANGE_Y = 4;  // same range as the random glances (vmin)
@@ -1470,7 +1560,7 @@ async function startTracking() {
     await loadDetector();
     if (!brain.followFaces) return;
     await startTrackStream();
-    if (caption.textContent === "Loading my face-finder…") show("I'll keep an eye out for you!");
+    if (caption.textContent === "Loading my face-finder…") show("I shall keep an eye out for you.");
     scheduleTrack(TRACK_MS);
   } catch (err) { trackingFailed(err); }
 }
@@ -1517,7 +1607,7 @@ function trackTick() {
 function onFace(face, src) {
   const now = Date.now(), gap = now - lastFaceAt;
   lastFaceAt = now;
-  if (sleepState !== "awake") { wake(); return; }       // sitting down in front of Sprocket wakes it
+  if (sleepState !== "awake") { wake(); return; }       // sitting down in front of Winslow wakes it
   poke();                                               // a face counts as activity
   if (gap >= GREET_GAP_MS) greetFace();
   if (previewOpen()) return;                            // with the preview open, eyes keep looking at it
@@ -1548,8 +1638,9 @@ function stopFollowing() {
 }
 function greetFace() {
   if (mood !== "neutral" || busy || listening || capturing || isSpeaking() || waking) return;
-  setMood("happy");                                     // happy chirp, no speech
-  show(`<b>${esc(brain.name)}:</b> Hi!`);
+  setMood("happy"); chirp();                            // soft tone, no speech
+  const tod = timeOfDay();
+  show(`<b>${esc(brain.name)}:</b> ${esc(tod === "late" ? `Still up, ${addr()}?` : `Good ${tod}, ${addr()}.`)}`);
   setTimeout(() => { if (mood === "happy") setMood("neutral"); }, 1200);
 }
 
@@ -1636,8 +1727,8 @@ if (!brain.hintShown) {
   brain.hintShown = true; save();
 }
 
-if (setupLoaded) show("Setup loaded! Key, voice and settings are saved in this browser.");
-else if (!brain.apiKey) show("Sprocket here! Say hi, tell me your name, or ask me to rate something");
+if (setupLoaded) show("Setup loaded. Key, voice and settings are saved in this browser.");
+else if (!brain.apiKey) show(esc(`At your service, ${addr()}. Say hello, tell me your name, or ask me to rate something.`));
 </script>
 </body>
 </html>
