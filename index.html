@@ -203,7 +203,7 @@
   @keyframes focus { from { transform: scale(1); } to { transform: scale(.7, .5); } }
   /* The camera view is a daydream: a soft, drifting thought bubble up in the top right,
      with a trail of dots leading down to Winslow's head. The bubble itself is the shutter (tap = snap);
-     two small badges on its edge close it (top-left) and switch camera (bottom-centre). */
+     the trail dots below it close it and switch camera. */
   :root { --pvw: clamp(140px, 36vw, 260px); }
   #preview {
     position: fixed; z-index: 20;
@@ -250,27 +250,42 @@
   #preview.sending #pvClip { filter: brightness(.45) saturate(.5); }
   #preview.sending #pvClip { cursor: progress; }
   #pvClip:focus-visible { box-shadow: 0 0 0 3px var(--accent); }
-  #pvTail i {
-    position: absolute; border-radius: 50%; background: rgba(168,212,255,.55);
-    box-shadow: 0 0 10px rgba(124,196,255,.5); pointer-events: none;
+  /* The thought trail doubles as the controls: biggest dot = close, middle = switch camera,
+     smallest = just a dot. Each control dot has a round 48px tap target (round, so neighbours
+     never overlap) and a faint engraved mark, so the trail still reads as a trail. */
+  #pvTail .dot {
+    position: absolute; width: 48px; height: 48px; padding: 0; border: none; border-radius: 50%;
+    background: transparent; display: flex; align-items: center; justify-content: center;
+    cursor: pointer; z-index: 3; -webkit-tap-highlight-color: transparent;
   }
-  #pvTail i:nth-child(1) { width: 16px; height: 16px; left: -6px;  bottom: -2px; }
-  #pvTail i:nth-child(2) { width: 11px; height: 11px; left: -24px; bottom: -20px; opacity: .8; }
-  #pvTail i:nth-child(3) { width: 7px;  height: 7px;  left: -38px; bottom: -36px; opacity: .6; }
-  /* Badges: 48px tap target, 36px visible disc, sitting on the bubble's edge. */
-  .badge {
-    position: absolute; z-index: 3; width: 48px; height: 48px; padding: 0; border: none;
-    background: transparent; display: flex; align-items: center; justify-content: center; cursor: pointer;
+  #pvTail .dot i {
+    display: flex; align-items: center; justify-content: center; border-radius: 50%;
+    background: rgba(168,212,255,.6); box-shadow: 0 0 10px rgba(124,196,255,.5);
+    transition: transform .15s, background .15s, box-shadow .15s;
   }
-  .badge span {
-    width: 36px; height: 36px; border-radius: 50%; display: flex; align-items: center; justify-content: center;
-    background: rgba(12,18,23,.9); border: 1px solid rgba(124,196,255,.4); box-shadow: 0 0 10px rgba(0,0,0,.5);
+  #pvTail .dot svg { fill: none; stroke: var(--bg); stroke-width: 2.6; stroke-linecap: round; stroke-linejoin: round; opacity: .7; }
+  #pvTail .dot:active i, #pvTail .dot:focus-visible i {
+    transform: scale(.82); background: rgba(215,236,255,.95); box-shadow: 0 0 16px rgba(160,210,255,.9);
   }
-  .badge .icon { width: 18px; height: 18px; }
-  .badge:active span { background: rgba(124,196,255,.25); }
-  #pvClose { left: calc(15% - 24px); top: calc(15% - 24px); }     /* on the blob's top-left curve */
-  #flip { left: calc(50% - 24px); bottom: -24px; }                 /* bottom-centre edge (the bubble is as tall as the picture) */
-  #flip[hidden] { display: none; }
+  #pvTail .dot:focus-visible { outline: none; }
+  /* Centres sit along a diagonal from the bubble's lower-left corner towards the face. */
+  #pvClose { left: calc(-6px - 24px);  top: calc(100% + 6px - 24px); }
+  #pvClose i { width: 26px; height: 26px; }
+  #pvClose svg { width: 12px; height: 12px; }
+  #flip { left: calc(-42px - 24px); top: calc(100% + 42px - 24px); }
+  #flip i { width: 20px; height: 20px; opacity: .9; }
+  #flip svg { width: 12px; height: 12px; }
+  #pvTail .deco {
+    position: absolute; left: calc(-70px - 5px); top: calc(100% + 70px - 5px); width: 10px; height: 10px;
+    border-radius: 50%; background: rgba(168,212,255,.5); box-shadow: 0 0 8px rgba(124,196,255,.45);
+    opacity: .75; pointer-events: none;
+  }
+  /* Only one camera: the middle dot is just a dot. */
+  #preview.solo #flip { cursor: default; }        /* disabled: taps are swallowed, not passed to the face */
+  #preview.solo #flip svg { display: none; }
+  /* Closing: the daydream shrinks back down into the trail. */
+  #preview.closing { animation: dreamOut .3s ease-in both; pointer-events: none; }
+  @keyframes dreamOut { to { opacity: 0; transform: translate(-30px, 30px) scale(.4); } }
   #pvHint {
     margin-top: 30px; font-size: 13px; color: var(--muted); opacity: .75; white-space: nowrap;
     pointer-events: none; display: none;
@@ -278,7 +293,7 @@
   #preview.show-hint #pvHint { display: block; }
   /* Your words at the top move left so they don't run under the bubble. */
   body.previewing #caption { right: calc(var(--pvw) + 30px); max-width: calc(100vw - var(--pvw) - 50px); }
-  /* Portrait: the face centres itself in the space below the bubble (and its badge and hint). */
+  /* Portrait: the face centres itself in the space below the bubble (and its hint and trail). */
   body.previewing #face { top: calc(env(safe-area-inset-top) + min(var(--pvw) * 1.25, 32vh) + 80px); }
   @media (prefers-reduced-motion: reduce) { #preview.open, #pvClip, #pvRing { animation: none; } }
 
@@ -378,11 +393,13 @@
     <div id="pvBubble">
       <div id="pvClip" role="button" tabindex="0" aria-label="Snap a picture: ask what Winslow sees"><video id="pv" playsinline muted autoplay aria-hidden="true"></video></div>
       <div id="pvRing"></div>
-      <div id="pvTail" aria-hidden="true"><i></i><i></i><i></i></div>
-      <button class="badge" id="pvClose" aria-label="Close camera"><span>
-        <svg class="icon" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg></span></button>
-      <button class="badge" id="flip" aria-label="Switch camera"><span>
-        <svg class="icon" viewBox="0 0 24 24"><path d="M3 12a9 9 0 0 1 15.5-6.2L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-15.5 6.2L3 16"/><path d="M3 21v-5h5"/></svg></span></button>
+      <div id="pvTail">
+        <button class="dot" id="pvClose" aria-label="Close camera"><i>
+          <svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg></i></button>
+        <button class="dot" id="flip" aria-label="Switch camera"><i>
+          <svg viewBox="0 0 24 24"><path d="M3 12a9 9 0 0 1 15.5-6.2L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-15.5 6.2L3 16"/><path d="M3 21v-5h5"/></svg></i></button>
+        <span class="deco" aria-hidden="true"></span>
+      </div>
     </div>
     <div id="pvHint">Tap to snap</div>
   </div>
@@ -479,7 +496,7 @@
    1. STORAGE: everything the robot knows lives in one object,
       saved in this browser's localStorage (on the phone).
    ========================================================= */
-const APP_VERSION = "v4.3";
+const APP_VERSION = "v4.4";
 // iPhone bug: after rotating, fixed buttons can be drawn in one place but tappable in another.
 // Snapping the page back to the top re-syncs them.
 function resyncLayout() {
@@ -1253,7 +1270,7 @@ async function startCamera() {
   pv.srcObject = stream;
   pv.classList.toggle("mirror", (facing || "user") === "user");   // unknown (e.g. laptop webcam) = front
   try { await pv.play(); } catch {}
-  updateFlipBadge();
+  updateFlipDot();
   if (fellBack && (want === "environment" ? facing !== "environment" : facing === "environment"))
     show(`No ${camLabel(want)} camera here, so I'm using the one I've got.`);
   return true;
@@ -1272,6 +1289,7 @@ async function openPreview() {
   camOpening = true;
   photoSentThisPreview = false;
   document.body.classList.add("previewing");
+  clearTimeout(pvCloseTimer); preview.classList.remove("closing");
   preview.classList.add("open"); lookBtn.classList.add("on");
   // "Tap to snap" shows under the bubble the first three times the camera opens, then never again.
   const hint = (brain.snapHints || 0) < 3;
@@ -1298,7 +1316,12 @@ function closePreview() {
   camGen++;                                              // cancels any camera still opening
   stopStream();
   clearTimeout(idleTimer);
-  preview.classList.remove("open");
+  // The bubble shrinks back into the trail, then hides (the camera itself is already off).
+  if (preview.classList.contains("open") && !document.hidden) {
+    preview.classList.add("closing");
+    clearTimeout(pvCloseTimer);
+    pvCloseTimer = setTimeout(() => preview.classList.remove("open", "closing"), 300);
+  } else preview.classList.remove("open", "closing");
   document.body.classList.remove("previewing");
   lookBtn.classList.remove("on");
   lookAt(0, 0);
@@ -1335,14 +1358,20 @@ flipBtn.addEventListener("click", async () => {
   catch (err) { closePreview(); setMood("sad"); show(cameraErrorText(err)); setTimeout(() => setMood("neutral"), 2000); }
 });
 document.getElementById("pvClose").addEventListener("click", e => { e.stopPropagation(); closePreview(); show("Camera off."); });
-flipBtn.addEventListener("click", e => e.stopPropagation());   // badges never count as a snap
+flipBtn.addEventListener("click", e => e.stopPropagation());   // trail dots never count as a snap
+let pvCloseTimer = null;
 
-// The flip badge only shows when there's another camera to flip to.
-async function updateFlipBadge() {
+// The middle trail dot only flips when there's another camera; otherwise it's just a dot.
+function setSolo(solo) {
+  preview.classList.toggle("solo", solo);
+  flipBtn.disabled = solo;
+  if (solo) flipBtn.setAttribute("aria-hidden", "true"); else flipBtn.removeAttribute("aria-hidden");
+}
+async function updateFlipDot() {
   try {
     const cams = (await navigator.mediaDevices.enumerateDevices()).filter(d => d.kind === "videoinput").length;
-    flipBtn.hidden = cams === 1;                         // 0 = browser won't say: keep it
-  } catch { flipBtn.hidden = false; }
+    setSolo(cams === 1);                                 // 0 = browser won't say: keep it
+  } catch { setSolo(false); }
 }
 
 // The bubble is the shutter: a tap snaps the frame and asks "What do you see?" (the old Snap button).
