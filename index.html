@@ -572,6 +572,14 @@
       <small>Lets Winslow look up current things (scores, weather, news, opening hours) through OpenRouter.
         Each search costs a little extra. Needs an API key.</small>
 
+      <label for="sEngine">Search engine</label>
+      <select id="sEngine">
+        <option value="perplexity">Perplexity</option>
+        <option value="auto">Auto (OpenRouter picks)</option>
+        <option value="exa">Exa</option>
+      </select>
+      <small>About $0.005 per search with Perplexity, $0.007 with Exa. Auto uses the model's own search where it has one.</small>
+
       <label for="sCity">Home city (optional)</label>
       <input id="sCity" type="text" placeholder="e.g. Manchester, UK" autocomplete="off">
       <small>Helps with local answers like weather and opening times. Stays on this phone and in your AI requests.</small>
@@ -649,7 +657,7 @@
    1. STORAGE: everything the robot knows lives in one object,
       saved in this browser's localStorage (on the phone).
    ========================================================= */
-const APP_VERSION = "v5.1";
+const APP_VERSION = "v5.2";
 // iPhone bug: after rotating, fixed buttons can be drawn in one place but tappable in another.
 // Snapping the page back to the top re-syncs them.
 function resyncLayout() {
@@ -687,6 +695,7 @@ const DEFAULTS = {
   snapHints: 0,      // times the "Tap to snap" hint has shown under the camera bubble (max 3)
   convo: true,       // keep listening after each reply
   webSearch: true,   // OpenRouter web search server tool (only used with an API key)
+  searchEngine: "perplexity",   // "perplexity" | "auto" | "exa" (openrouter:web_search engine)
   homeCity: "",      // optional, for local answers
   character: CHARACTER_VERSION
 };
@@ -1167,7 +1176,8 @@ ${facts}
 
 Right now it is ${nowText()}.${brain.homeCity ? ` Your human lives in or near ${brain.homeCity}; use that for anything local (weather, opening hours, events) unless they name another place.` : ""}
 
-${searchOn() && !noSearch ? `CURRENT FACTS: you have a web search tool. Use it for anything time-sensitive or that may have changed since your training: sports fixtures, schedules and scores, weather, news, prices, opening hours, release dates, who currently holds a role, and anything "latest", "today", "tonight", "this week" or "next". Answer from what the search finds. If the search fails or finds nothing useful, say so plainly in character, for example "I'm afraid I can't confirm that at present, ${addr()}." Never guess or invent current facts.`
+${searchOn() && !noSearch ? `CURRENT FACTS: you have a web search tool. Use it for anything time-sensitive or that may have changed since your training: sports fixtures, schedules and scores, weather, news, prices, opening hours, release dates, who currently holds a role, and anything "latest", "today", "tonight", "this week" or "next". Answer from what the search finds. If the search fails or finds nothing useful, say so plainly in character, for example "I'm afraid I can't confirm that at present, ${addr()}." Never guess or invent current facts.
+You get ONE search per reply, so make the query count. Write it self-contained: replace words like "they", "he", "she", "it", "there" and "next" with the actual names from the conversation, and for schedules or fixtures include the month and year, for example "New England Patriots next game ${new Date().toLocaleDateString("en-GB", { month: "long", year: "numeric" })}".${recentSearchText()}`
   : `CURRENT FACTS: you cannot search the web right now. For anything time-sensitive (scores, schedules, weather, news, prices, opening hours, anything "latest"), do not guess: say plainly, in character, that you can't confirm it at present, for example "I'm afraid I can't confirm that at present, ${addr()}." You may still use the date and time above.`}
 In "say", give the answer itself in plain spoken words. Never read out sources, URLs, website names, citation marks or markdown.
 
@@ -1236,24 +1246,72 @@ function cleanSay(s) {
     .replace(/\*\*|__|`+|^#+\s*/gm, "")
     .replace(/\s+([.,;:!?])/g, "$1").replace(/\(\s*\)/g, "").replace(/\s{2,}/g, " ").trim();
 }
-// What a reply says about any searches it ran. The server-tool docs only show the Responses API,
-// so look in each place Chat Completions might put it.
+// What a reply says about the searches it ran. OpenRouter documents URL citations as
+// choices[0].message.annotations = [{ type: "url_citation", url_citation: { url, title, content } }]
+// (the server-tool page only shows the Responses API), so read that first and then the other
+// places sources have been seen: content-part annotations, `citations`, `search_results`, and
+// server-tool records in reasoning_details.
 function searchInfo(data) {
-  const msg = data?.choices?.[0]?.message || {};
-  const anns = [...(msg.annotations || []), ...((Array.isArray(msg.content) ? msg.content : []).flatMap(p => p.annotations || []))];
+  const choice = data?.choices?.[0] || {}, msg = choice.message || {};
   const seen = new Set(), sources = [];
-  for (const a of anns) {
-    const c = a?.url_citation || a;
-    const url = typeof c?.url === "string" ? c.url : "";
-    if (!/^https?:\/\//i.test(url) || seen.has(url)) continue;
-    seen.add(url); sources.push({ url, title: String(c.title || "").slice(0, 140) });
+  const add = (url, title, content) => {
+    if (typeof url !== "string" || !/^https?:\/\//i.test(url)) return;
+    url = url.trim(); if (seen.has(url)) return;
+    seen.add(url);
+    sources.push({ url, title: String(title || "").slice(0, 140), content: String(content || "").replace(/\s+/g, " ").slice(0, 600) });
+  };
+  const anns = [...(msg.annotations || []), ...(choice.annotations || []),
+                ...((Array.isArray(msg.content) ? msg.content : []).flatMap(p => p?.annotations || []))];
+  for (const a of anns) { const c = a?.url_citation || a; add(c?.url, c?.title, c?.content); }
+  for (const list of [msg.citations, data?.citations, msg.search_results, data?.search_results])
+    for (const c of (Array.isArray(list) ? list : [])) typeof c === "string" ? add(c) : add(c?.url, c?.title, c?.snippet || c?.content);
+  // Server-tool records (e.g. reasoning_details entries with `arguments` / `result`): query + URLs.
+  const queries = [];
+  let records = 0;
+  const recs = [...(msg.reasoning_details || []), ...(msg.tool_calls || [])]
+    .filter(r => /search/i.test(JSON.stringify([r?.type, r?.name, r?.function?.name])));
+  for (const r of recs) {
+    records++;
+    const args = r.arguments ?? r.function?.arguments;
+    try { const q = (typeof args === "string" ? JSON.parse(args) : args)?.query; if (q) queries.push(String(q).slice(0, 200)); } catch {}
+    const res = typeof r.result === "string" ? r.result : r.result ? JSON.stringify(r.result) : "";
+    try { const j = JSON.parse(res); for (const x of (Array.isArray(j) ? j : j?.results || [])) add(x?.url, x?.title, x?.content || x?.snippet); }
+    catch { (res.match(/https?:\/\/[^\s"'<>)\]]+/g) || []).forEach(u => add(u)); }
   }
   const u = data?.usage || {};
   const det = u.server_tool_use_details || u.server_tool_use || {};
-  const count = Number(det.web_search_requests ?? det.tool_calls_executed ?? 0) || (sources.length ? 1 : 0);
-  const queries = (msg.tool_calls || []).filter(t => /search/i.test(t?.function?.name || t?.type || ""))
-    .map(t => { try { return JSON.parse(t.function.arguments).query; } catch { return null; } }).filter(Boolean);
-  return { count, sources, queries, cost: Number(u.cost) };
+  const count = Number(det.web_search_requests ?? det.tool_calls_executed ?? 0) || records || (sources.length ? 1 : 0);
+  const toolCost = Number(u.cost_details?.server_tool_cost);
+  return { ran: count > 0, count, sources: sources.slice(0, 10), queries, cost: Number(u.cost), toolCost };
+}
+// Tool settings: one search per reply (max_uses), 3 results, and the chosen engine.
+const SEARCH_ENGINES = { perplexity: "Perplexity", auto: "Auto", exa: "Exa" };
+const SEARCH_PRICE = { perplexity: 0.005, exa: 0.007, auto: 0.007 };   // USD per search, OpenRouter list prices (auto: est.)
+const engineNow = () => SEARCH_ENGINES[brain.searchEngine] ? brain.searchEngine : "perplexity";
+function searchParams() {
+  return { engine: engineNow(), max_results: 3, max_uses: 1 };   // engine: "auto" = OpenRouter's default choice
+}
+// Search cost today: OpenRouter's server-tool cost if it reports one, else the engine's list price.
+function countSearch(si) {
+  const u = usageToday();
+  u.searches = (u.searches || 0) + si.count;
+  u.searchCost = (u.searchCost || 0) + (Number.isFinite(si.toolCost) && si.toolCost > 0 ? si.toolCost : si.count * SEARCH_PRICE[engineNow()]);
+}
+function logSearch(si, userText, note, replyCost) {
+  const what = si.queries.length ? si.queries.map(q => `"${q}"`).join(", ") : `for "${userText}"`;
+  logEvent("search", `Searched ${what} (${SEARCH_ENGINES[engineNow()]}): ` +
+    (note || `${si.sources.length} source${si.sources.length === 1 ? "" : "s"}`) +
+    (Number.isFinite(replyCost) ? ` · $${replyCost.toFixed(4)} for this reply` : ""), { links: si.sources });
+}
+// The last successful search, kept in memory for 10 minutes so follow-ups needn't search again.
+const SEARCH_CACHE_MS = 10 * 60000;
+let lastSearch = null;
+function recentSearchText() {
+  if (!lastSearch || Date.now() - lastSearch.t > SEARCH_CACHE_MS) return "";
+  const mins = Math.max(1, Math.round((Date.now() - lastSearch.t) / 60000));
+  const res = lastSearch.sources.map((s, i) => `${i + 1}. ${s.title || s.url}${s.content ? ": " + s.content : ""}`).join("\n");
+  return `\n\nRECENT SEARCH (${mins} min ago), for "${lastSearch.queries[0] || lastSearch.question}":\n${res}\nYou answered: "${lastSearch.answer}"\n` +
+    `If a follow-up question can be answered from these results, answer from them and do NOT search again. Search only for something they don't cover.`;
 }
 
 /* ---------- Offline brain: simple rules, no AI, no internet ----------
@@ -1478,8 +1536,9 @@ async function think(userText, image) {
     { type: "text", text: userText },
     { type: "image_url", image_url: { url: image } }
   ] };
-  // Web search runs inside OpenRouter during this same request. While it might be searching,
-  // show the thinking face and a caption: straight away for timely questions, otherwise if the reply is slow.
+  // Web search runs inside OpenRouter during this same request (at most one search; see below for the
+  // one retry). While it might be searching, show the thinking face and a caption: straight away for
+  // timely questions, otherwise if the reply is slow.
   const useSearch = searchOn();
   let wiresTimer = null;
   const wires = () => { if (busy) { setMood("thinking"); show(`<b>${esc(brain.name)}:</b> Consulting the wires…`); } };
@@ -1500,33 +1559,52 @@ async function think(userText, image) {
       presence_penalty: 0.3,
       usage: { include: true },                          // OpenRouter adds the reply's cost (for the dashboard)
       // OpenRouter's web search server tool (replaces the deprecated "web" plugin and ":online" models).
-      ...(withSearch ? { tools: [{ type: "openrouter:web_search", parameters: { max_results: 3 } }] } : {})
+      ...(withSearch ? { tools: [{ type: "openrouter:web_search", parameters: searchParams() }] } : {})
     })
   });
+  const post = async withSearch => { const r = await call(withSearch); return { res: r, data: await r.json().catch(() => ({})) }; };
   try {
-    let res = await call(useSearch), data = await res.json().catch(() => ({}));
+    let { res, data } = await post(useSearch);
     if (!res.ok && useSearch && ![401, 402, 403, 429].includes(res.status)) {
       // The model or account couldn't use search: answer without it, and don't guess current facts.
       const why = data?.error?.message || ("HTTP " + res.status);
       logEvent("error", "Web search unavailable: " + why);
       if (/tool|function|web_search|not support/i.test(why)) searchBroken = true;   // skip it for the rest of this visit
       messages[0] = { role: "system", content: systemPrompt(true) };
-      res = await call(false); data = await res.json().catch(() => ({}));
+      ({ res, data } = await post(false));
     }
     if (!res.ok) throw new Error(data?.error?.message || ("HTTP " + res.status));
+    let replyCost = Number(data.usage?.cost);
+    let si = searchInfo(data);
+    if (useSearch && si.ran) countSearch(si);
+    // A search that found nothing gets exactly one more try, with a nudge to rephrase.
+    if (useSearch && si.ran && !si.sources.length) {
+      logSearch(si, userText, "returned no sources; trying once more");
+      messages[0] = { role: "system", content: systemPrompt() + `\n\nYour web search for this message${si.queries.length ? ` ("${si.queries[0]}")` : ""} returned no results. Search once more with a different, more specific, self-contained query.` };
+      const retry = await post(true);
+      if (retry.res.ok) {
+        data = retry.data; replyCost = (Number.isFinite(replyCost) ? replyCost : 0) + (Number(data.usage?.cost) || 0);
+        si = searchInfo(data);
+        if (si.ran) countSearch(si);
+      }
+    }
     if (caption.textContent.includes("Consulting the wires")) show(`<b>You:</b> ${esc(userText)}`);
     const msg = data.choices?.[0]?.message || {};
     const raw = Array.isArray(msg.content) ? msg.content.map(p => p?.text || "").join("") : String(msg.content || "");
     const reply = parseReply(raw);
     // Spoken text: no links or citation marks, and "9 out of 10" rather than "9/10".
     reply.say = cleanSay(reply.say).replace(/(?<![\d.\/])(\d+(?:\.\d+)?)\s*\/\s*(10|100)\b(?!\/)/g, "$1 out of $2");
-    // Log any searches (query, results, cost); sources go in the dashboard log, never into speech.
-    const si = searchInfo(data);
-    if (useSearch && si.count) {
-      const what = si.queries.length ? si.queries.map(q => `"${q}"`).join(", ") : `for "${userText}"`;
-      logEvent("search", `Searched ${what}: ${si.count > 1 ? si.count + " searches, " : ""}` +
-        `${si.sources.length || "no"} source${si.sources.length === 1 ? "" : "s"}` +
-        (Number.isFinite(si.cost) ? ` · $${si.cost.toFixed(4)} for this reply` : ""), { links: si.sources });
+    // Log the search with its sources (shown in the dashboard, never spoken). If it found nothing,
+    // Winslow must not answer from memory: he says he couldn't confirm it.
+    if (useSearch && si.ran) {
+      if (si.sources.length) {
+        logSearch(si, userText, "", Number(data.usage?.cost));
+        lastSearch = { t: Date.now(), question: userText, queries: si.queries, sources: si.sources, answer: reply.say };
+      } else {
+        logSearch(si, userText, "returned no sources, so Winslow couldn't confirm the answer");
+        reply.say = `I'm afraid I couldn't confirm that at present, ${addr()}. My search came back empty.`;
+        reply.emotion = "neutral"; reply.action = null;
+      }
     }
 
     // History keeps just the clean reply (no citations), so later turns stay small.
@@ -1534,7 +1612,7 @@ async function think(userText, image) {
     if (Array.isArray(reply.remember)) {
       reply.remember.filter(f => typeof f === "string" && f.trim()).forEach(f => rememberFact(f.trim()));
     }
-    countChat(true, Number(data.usage?.cost));
+    countChat(true, replyCost);
     save();
 
     setMood(reply.emotion || "neutral");
@@ -1764,6 +1842,7 @@ function openSettings() {
   $("sFollow").checked = !!brain.followFaces;
   $("sConvo").checked = brain.convo !== false;
   $("sWeb").checked = brain.webSearch !== false;
+  $("sEngine").value = engineNow();
   $("sCity").value = brain.homeCity || "";
   $("sDebug").checked = !!brain.debug;
   $("sSleep").value = String([0, 2, 5, 10].includes(brain.sleepAfter) ? brain.sleepAfter : 2);
@@ -1846,6 +1925,7 @@ $("btnSave").addEventListener("click", () => {
   brain.sleepAfter = Number($("sSleep").value);
   brain.convo = $("sConvo").checked;
   brain.webSearch = $("sWeb").checked;
+  brain.searchEngine = SEARCH_ENGINES[$("sEngine").value] ? $("sEngine").value : "perplexity";
   brain.homeCity = $("sCity").value.trim().slice(0, 80);
   brain.debug = $("sDebug").checked;
   document.body.classList.toggle("debug", brain.debug);
@@ -1883,6 +1963,7 @@ $("btnImport").addEventListener("click", async () => {
     if (typeof brain.address !== "string" || !brain.address.trim()) brain.address = DEFAULTS.address;
     if (typeof brain.homeCity !== "string") brain.homeCity = "";
     brain.webSearch = brain.webSearch !== false;
+    if (!SEARCH_ENGINES[brain.searchEngine]) brain.searchEngine = "perplexity";
     if (brain.camera !== "environment") brain.camera = "user";
     if (![0, 2, 5, 10].includes(brain.sleepAfter)) brain.sleepAfter = 2;
     brain.followFaces = old.followFaces;                   // device-specific: a backup doesn't switch the camera on
@@ -2436,7 +2517,8 @@ function renderStatus() {
     ["State", state], ["Sleeps after", brain.sleepAfter ? `${brain.sleepAfter} min idle` : "Never"],
     ["Memory", `${brain.memory.length} fact${brain.memory.length === 1 ? "" : "s"}`],
     ["Voice", brain.voiceName || "Automatic (British first)"],
-    ["Web search", !brain.apiKey ? "Needs an API key" : searchOn() ? "On (3 results per search)" : searchBroken ? "Not available with this model" : "Off"],
+    ["Web search", !brain.apiKey ? "Needs an API key" : searchOn() ? `On: ${SEARCH_ENGINES[engineNow()]}, 1 search per reply, 3 results` : searchBroken ? "Not available with this model" : "Off"],
+    ["Search cost today (est.)", `$${(u.searchCost || 0).toFixed(4)} (${u.searches || 0} search${u.searches === 1 ? "" : "es"})`],
     ["Home city", brain.homeCity || "Not set"], ["Local time", nowText()],
     ["Body connection", "Not connected (no body yet)", true]]));
 }
