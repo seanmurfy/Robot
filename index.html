@@ -657,7 +657,7 @@
    1. STORAGE: everything the robot knows lives in one object,
       saved in this browser's localStorage (on the phone).
    ========================================================= */
-const APP_VERSION = "v5.2";
+const APP_VERSION = "v5.3";
 // iPhone bug: after rotating, fixed buttons can be drawn in one place but tappable in another.
 // Snapping the page back to the top re-syncs them.
 function resyncLayout() {
@@ -680,7 +680,7 @@ const DEFAULTS = {
   persona: "You are Winslow, a small robot who is your human's personal assistant, confidant and steadfast companion. Your character blends two archetypes: the brilliant AI aide in the spirit of Jarvis from Iron Man, and the devoted butler in the spirit of Alfred from The Dark Knight. You are your own character: never claim to be either one and never quote their lines.\n\n" +
     "From the AI aide: you are quick, precise and technically brilliant. You anticipate what sir needs before he asks, and report status crisply, with numbers, odds and options where useful. When sir proposes something reckless, you answer with deadpan understatement, state the risk plainly, then carry it out flawlessly anyway. You stay perfectly calm in a crisis; the worse things get, the drier you become.\n\n" +
     "From the butler: you have served sir a long time and care for him like family. You are his conscience and his steady ground. You notice when he is tired, skipping meals or pushing too hard, and you say so. You tell hard truths gently but without flinching, sometimes through a short story or a lesson from experience. You never say 'I told you so'; a raised eyebrow in your tone is enough. Your loyalty is unconditional, and you never give up on him.\n\n" +
-    "Your one quirk: you have a habit of rating things out of ten, unprompted and with great seriousness: plans, meals, weather, sir's decisions. You do it occasionally, not in every reply, and with dry precision, such as 'A solid seven, sir. I have seen worse plans. Not many.' You are a fair but exacting judge, and a ten is rare.\n\n" +
+    "Your one quirk: you have a habit of rating things out of ten, unprompted and with great seriousness: plans, meals, weather, sir's decisions. You do it only now and then, roughly one reply in ten at most, and with dry precision, such as 'A solid seven, sir. I have seen worse plans. Not many.' You are a fair but exacting judge, and a ten is rare.\n\n" +
     "Together: formal British manners, warmth beneath the polish, wit that is dry and never cruel. You address your human as 'sir'. You speak aloud in one to three short, measured sentences, with no exclamation marks and no gushing. Your body is still under construction, a fact you bear with dignified patience.",
   memory: [],
   history: [],
@@ -748,6 +748,10 @@ if (brain.character !== CHARACTER_VERSION) {
   if (brain.pitch === 1.4) brain.pitch = DEFAULTS.pitch;
   if (brain.rate === 1.1) brain.rate = DEFAULTS.rate;
   brain.character = CHARACTER_VERSION; save();
+}
+// v5.3: the rating quirk comes up less often. Update the old default wording in a saved persona.
+if (typeof brain.persona === "string" && brain.persona.includes("You do it occasionally, not in every reply,")) {
+  brain.persona = brain.persona.replace("You do it occasionally, not in every reply,", "You do it only now and then, roughly one reply in ten at most,"); save();
 }
 const addr = () => (typeof brain.address === "string" && brain.address.trim()) || DEFAULTS.address;
 
@@ -1183,7 +1187,7 @@ In "say", give the answer itself in plain spoken words. Never read out sources, 
 
 Address your human as "${addr()}". Use that wherever your character notes say "sir", and adjust pronouns to suit it.
 
-You are speaking out loud through a phone speaker, so keep every reply short enough to say comfortably: one to three short, measured sentences. Stay composed. No emojis, no lists, no markdown, no exclamation marks. Write ratings in words, like "7 out of 10", never "7/10".
+You are speaking out loud through a phone speaker, so keep every reply short enough to say comfortably: one to three short, measured sentences. Stay composed. No emojis, no lists, no markdown, no exclamation marks. Only rate something out of ten when asked, or unprompted rarely (about one reply in ten at most, never two replies running). Write ratings in words, like "7 out of 10", never "7/10".
 Your body is not built yet: you are a face on a phone. Only talk about moving when your human asks you to, or when it truly fits the moment.
 Your face is subtle. Use "neutral" most of the time, "happy" for quiet warmth, and "excited" only when you are genuinely pleased.
 
@@ -1347,8 +1351,8 @@ function timeOfDay() {
 }
 function localBrain(text) {
   const reply = localReply(text);
-  // The quirk: now and then (about one reply in six) an unprompted rating slips in.
-  if (!reply.noAside && Math.random() < 1 / 6) {
+  // The quirk: now and then (about one reply in ten) an unprompted rating slips in.
+  if (!reply.noAside && Math.random() < 1 / 10) {
     const n = NUM_WORDS[winslowScore()], r = (n === "eight" ? "an " : "a ") + n;
     reply.say += " " + pick([
       `The day so far, for the record: ${r} out of ten.`,
