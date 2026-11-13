@@ -201,38 +201,63 @@
     animation: focus .3s ease-in-out 2 alternate;
   }
   @keyframes focus { from { transform: scale(1); } to { transform: scale(.7, .5); } }
+  /* The camera view is a daydream: a soft, drifting thought bubble up in the top right,
+     with a trail of dots leading down to Winslow's head. Buttons sit in a small bar beneath it. */
+  :root { --pvw: clamp(140px, 36vw, 260px); }
   #preview {
-    position: fixed; left: 50%; bottom: calc(20px + env(safe-area-inset-bottom)); z-index: 20;
-    width: 40vw; min-width: 170px; max-width: 360px; min-height: 120px;
-    transform: translateX(-50%);
-    border-radius: 18px; overflow: hidden; border: 2px solid var(--accent);
-    background: #000; box-shadow: 0 0 6vmin rgba(124,196,255,.25);
-    display: none;
+    position: fixed; top: calc(12px + env(safe-area-inset-top)); right: 12px; z-index: 20;
+    display: none; flex-direction: column; align-items: center; gap: 10px;
   }
-  #preview.open { display: block; }
-  #pv { display: block; width: 100%; max-height: 38vh; object-fit: cover; }
+  #preview.open { display: flex; animation: dreamIn .55s cubic-bezier(.2,.9,.3,1) both, drift 7s ease-in-out .55s infinite; }
+  @keyframes dreamIn { from { opacity: 0; transform: translate(-30px, 30px) scale(.4); } to { opacity: 1; transform: none; } }
+  @keyframes drift { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-5px); } }
+  #pvBubble { position: relative; width: var(--pvw); }
+  #pvClip {
+    position: relative; width: 100%; aspect-ratio: 4 / 5; max-height: 32vh; overflow: hidden;
+    border-radius: 47% 53% 45% 55% / 52% 44% 56% 48%;
+    background: #0b1218;
+    box-shadow: 0 0 5vmin rgba(124,196,255,.35), 0 0 0 1.5px rgba(190,225,255,.22);
+    animation: morph 9s ease-in-out infinite;
+  }
+  @keyframes morph {
+    0%, 100% { border-radius: 47% 53% 45% 55% / 52% 44% 56% 48%; }
+    50%      { border-radius: 54% 46% 52% 48% / 46% 55% 45% 54%; }
+  }
+  /* Feathered, slightly hazy edges: the dreamy look (the frame sent to the AI is untouched). */
+  #pvClip::before {
+    content: ""; position: absolute; inset: 0; z-index: 1; border-radius: inherit; pointer-events: none;
+    box-shadow: inset 0 0 18px 10px rgba(5,9,12,.75), inset 0 0 40px 6px rgba(124,196,255,.3);
+  }
+  #pv { display: block; width: 100%; height: 100%; object-fit: cover; filter: saturate(.85) brightness(1.05); }
   #pv.mirror { transform: scaleX(-1); }
-  #preview.flash::after {
-    content: ""; position: absolute; inset: 0; background: #fff; opacity: .6; pointer-events: none;
+  #preview.flash #pvClip::after {
+    content: ""; position: absolute; inset: 0; z-index: 2; background: #fff; opacity: .6; pointer-events: none;
   }
-  #preview .iconbtn {
-    position: absolute; z-index: 21; border-radius: 999px; background: rgba(5,9,12,.7);
+  #pvTail i {
+    position: absolute; border-radius: 50%; background: rgba(168,212,255,.55);
+    box-shadow: 0 0 10px rgba(124,196,255,.5); pointer-events: none;
   }
-  #pvClose { top: 6px; right: 6px; }
-  #flip { top: 6px; right: 60px; }
-  #pvSnap {
-    bottom: 8px; left: 50%; transform: translateX(-50%);
-    padding: 0 14px; font-size: 15px; color: var(--text); white-space: nowrap;
+  #pvTail i:nth-child(1) { width: 16px; height: 16px; left: -6px;  bottom: -2px; }
+  #pvTail i:nth-child(2) { width: 11px; height: 11px; left: -24px; bottom: -20px; opacity: .8; }
+  #pvTail i:nth-child(3) { width: 7px;  height: 7px;  left: -38px; bottom: -36px; opacity: .6; }
+  #pvBar {
+    display: flex; gap: 2px; padding: 0 4px; border-radius: 24px;
+    background: rgba(17,24,29,.72); border: 1px solid rgba(124,196,255,.18);
+    -webkit-backdrop-filter: blur(12px); backdrop-filter: blur(12px);
   }
+  #pvSnap { padding: 0 12px; font-size: 15px; color: var(--text); white-space: nowrap; }
   #pvSnap .icon { width: 22px; height: 22px; }
-  /* While the preview is open, the face moves up so the eyes stay visible above it. */
-  body.previewing #face { bottom: calc(30px + 38vh); }
+  /* Your words at the top move left so they don't run under the bubble. */
+  body.previewing #caption { right: calc(var(--pvw) + 30px); max-width: calc(100vw - var(--pvw) - 50px); }
+  /* Portrait: the face centres itself in the space below the bubble and its buttons. */
+  body.previewing #face { top: calc(env(safe-area-inset-top) + min(var(--pvw) * 1.25, 32vh) + 70px); }
+  @media (prefers-reduced-motion: reduce) { #preview.open, #pvClip { animation: none; } }
 
-  /* ---------- Landscape phone: preview beside the face ---------- */
+  /* ---------- Landscape phone: face shifts left of the bubble ---------- */
   @media (orientation: landscape) and (max-height: 500px) {
-    #preview { left: auto; right: 12px; bottom: 12px; transform: none; width: 34vw; max-width: none; }
-    #pv { max-height: calc(100vh - 30px); }
-    body.previewing #face { bottom: 0; right: calc(34vw + 24px); }
+    :root { --pvw: clamp(150px, 24vw, 240px); }
+    #pvClip { max-height: calc(100vh - 110px); aspect-ratio: 5 / 4; }
+    body.previewing #face { top: 0; right: calc(var(--pvw) + 40px); }
     #typebar { bottom: calc(72px + env(safe-area-inset-bottom)); }
   }
   #typed {
@@ -321,16 +346,21 @@
   </nav>
 
   <div id="preview">
-    <video id="pv" playsinline muted autoplay></video>
+    <div id="pvBubble">
+      <div id="pvClip"><video id="pv" playsinline muted autoplay></video></div>
+      <div id="pvTail"><i></i><i></i><i></i></div>
+    </div>
+    <div id="pvBar">
     <button class="iconbtn" id="flip" aria-label="Switch camera">
       <svg class="icon" viewBox="0 0 24 24"><path d="M3 12a9 9 0 0 1 15.5-6.2L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-15.5 6.2L3 16"/><path d="M3 21v-5h5"/></svg>
-    </button>
-    <button class="iconbtn" id="pvClose" aria-label="Close camera">
-      <svg class="icon" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg>
     </button>
     <button class="iconbtn" id="pvSnap" aria-label="Snap: ask what Winslow sees">
       <svg class="icon" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8"/><circle cx="12" cy="12" r="3"/></svg>Snap
     </button>
+    <button class="iconbtn" id="pvClose" aria-label="Close camera">
+      <svg class="icon" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg>
+    </button>
+    </div>
   </div>
 
   <div id="settings">
@@ -425,7 +455,7 @@
    1. STORAGE: everything the robot knows lives in one object,
       saved in this browser's localStorage (on the phone).
    ========================================================= */
-const APP_VERSION = "v4.1";
+const APP_VERSION = "v4.2";
 // iPhone bug: after rotating, fixed buttons can be drawn in one place but tappable in another.
 // Snapping the page back to the top re-syncs them.
 function resyncLayout() {
@@ -1215,7 +1245,7 @@ async function openPreview() {
   photoSentThisPreview = false;
   document.body.classList.add("previewing");
   preview.classList.add("open"); lookBtn.classList.add("on");
-  setMood("neutral"); lookAt(0, 7);                      // eyes look down at the preview
+  setMood("neutral"); lookAt(6, -5);                     // eyes glance up at the daydream bubble
   show("Opening my eyes…");
   try {
     if (!(await startCamera())) return false;
