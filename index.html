@@ -121,7 +121,18 @@
 
   body.listening .eye { box-shadow: 0 0 8vmin var(--listen), 0 0 16vmin var(--listen-glow); }
 
-  #mouthBox { height: 7vmin; margin-top: 9vmin; display: flex; justify-content: center; align-items: flex-start; }
+  #mouthBox { position: relative; height: 7vmin; margin-top: 9vmin; display: flex; justify-content: center; align-items: flex-start; }
+  /* Winslow's words appear where his mouth is, lighting up as he says them (the mouth hides meanwhile).
+     Only a sentence or so shows at a time, so it never grows into a wall of text. */
+  #speech {
+    position: absolute; top: -1.6vmin; left: 50%; transform: translateX(-50%);
+    width: min(86vw, 620px); text-align: center;
+    font-size: clamp(18px, 4.6vmin, 30px); line-height: 1.35; font-weight: 500;
+    color: var(--eye); text-shadow: 0 0 2.5vmin var(--glow);
+    opacity: 0; transition: opacity .35s; pointer-events: none;
+  }
+  #speech .later { opacity: .35; }
+  body.sad #speech { color: var(--sad); }
   #mouth {
     width: 10vmin; height: 2vmin; border-radius: 2vmin;
     background: var(--eye); opacity: .85;
@@ -129,6 +140,8 @@
   }
   body.happy #mouth { width: 12vmin; }
   body.sad #mouth { background: var(--sad); width: 8vmin; }
+  body.saying #speech { opacity: 1; }
+  body.saying #mouth { opacity: 0; }
 
   /* ---------- Caption ---------- */
   /* Shown only while talking: fades in, fades out after things go quiet.
@@ -283,7 +296,7 @@
       <div class="eye" id="eyeL"></div>
       <div class="eye" id="eyeR"></div>
     </div>
-    <div id="mouthBox"><div id="mouth"></div></div>
+    <div id="mouthBox"><div id="mouth"></div><div id="speech" aria-live="polite"></div></div>
   </div>
   <div id="zzz"></div>
 
@@ -412,7 +425,7 @@
    1. STORAGE: everything the robot knows lives in one object,
       saved in this browser's localStorage (on the phone).
    ========================================================= */
-const APP_VERSION = "v4.0";
+const APP_VERSION = "v4.1";
 // iPhone bug: after rotating, fixed buttons can be drawn in one place but tappable in another.
 // Snapping the page back to the top re-syncs them.
 function resyncLayout() {
@@ -611,17 +624,82 @@ function chooseVoice(name) {
       || all.find(v => /en(-|_)US/i.test(v.lang))
       || all[0];
 }
+// The browser loads its voice list a moment after the page opens. Speaking before that uses the
+// default voice (the "wrong voice for one sentence after a reload" bug), so wait for it, briefly.
+function whenVoicesReady(maxMs) {
+  return new Promise(res => {
+    const t0 = Date.now();
+    (function check() {
+      if (speechSynthesis.getVoices().length || Date.now() - t0 > maxMs) res();
+      else setTimeout(check, 100);                         // polling: iPhone rarely fires voiceschanged
+    })();
+  });
+}
+if ("speechSynthesis" in window) speechSynthesis.getVoices();   // start loading voices right away
+
+/* ---------- Words at the mouth: shown a sentence at a time, lit word by word ---------- */
+const speechEl = document.getElementById("speech");
+let sayChunks = [], sayLen = 0, sayT0 = 0, sayCps = 12, sayBoundary = false, sayTimer = null, sayHide = null, sayHtml = "";
+function chunkText(text) {
+  // Sentences; long ones split at commas. Pieces must join back to exactly `text` (char positions matter).
+  const out = [];
+  let pos = 0;
+  for (const s of text.match(/[^.!?…]+[.!?…]*["'”’)\]]*\s*|[.!?…]+\s*/g) || [text]) {
+    for (const p of (s.length > 90 ? s.match(/[^,;:]+[,;:]?\s*|[,;:]\s*/g) : [s])) {
+      const last = out[out.length - 1];
+      if (last && (p.trim().length < 14 || last.text.trim().length < 14) && last.text.length + p.length <= 90) last.text += p;
+      else out.push({ start: pos, text: p });
+      pos += p.length;
+    }
+  }
+  return out.map(c => c.text).join("") === text ? out : [{ start: 0, text }];
+}
+function renderSay(ci) {
+  let i = 0;
+  while (i + 1 < sayChunks.length && sayChunks[i + 1].start <= ci) i++;
+  const c = sayChunks[i]; if (!c) return;
+  const rel = ci - c.start;
+  const html = c.text.trim() ? c.text.replace(/\S+/g, (w, off) => off <= rel ? esc(w) : `<span class="later">${esc(w)}</span>`) : "";
+  if (html !== sayHtml) speechEl.innerHTML = sayHtml = html;
+}
+function sayStart(text, rate) {
+  clearTimeout(sayHide); clearInterval(sayTimer);
+  sayChunks = chunkText(text); sayLen = text.length; sayBoundary = false;
+  sayT0 = Date.now(); sayCps = 12 * (rate || 1);
+  renderSay(0);
+  document.body.classList.add("saying");
+  // Follows the voice's word events when the browser sends them; otherwise estimates from time.
+  sayTimer = setInterval(() => { if (!sayBoundary) renderSay((Date.now() - sayT0) / 1000 * sayCps); }, 120);
+}
+function sayEnd(holdMs = 1600) {
+  clearInterval(sayTimer); sayTimer = null;
+  renderSay(sayLen);                                     // last bit fully lit
+  clearTimeout(sayHide);
+  sayHide = setTimeout(() => document.body.classList.remove("saying"), holdMs);
+}
+// A line with no speech (e.g. greeting a face): show it at the mouth for a moment.
+function mouthSay(text, ms = 2500) { sayStart(text, 1); sayEnd(ms); }
+
+let speakGen = 0;
 function speak(text, onDone, opts = {}) {
   hideDock();
-  if (!("speechSynthesis" in window)) { onDone && onDone(); return; }
+  const gen = ++speakGen;
+  if (!("speechSynthesis" in window)) { mouthSay(text, 1500 + text.length * 80); onDone && onDone(); return; }
+  if (!opts._waited && !speechSynthesis.getVoices().length) {
+    speakingUntil = Date.now() + 2500;                   // counts as talking while we wait
+    whenVoicesReady(1500).then(() => { if (gen === speakGen) speak(text, onDone, { ...opts, _waited: true }); });
+    return;
+  }
   if (speechSynthesis.speaking || speechSynthesis.pending) speechSynthesis.cancel();
   const u = new SpeechSynthesisUtterance(text);
   u.rate  = opts.rate  ?? brain.rate  ?? 1.0;
   u.pitch = opts.pitch ?? brain.pitch ?? 0.9;
   u.volume = opts.volume ?? 1;
   const v = chooseVoice(opts.voiceName ?? brain.voiceName);
-  if (v) { u.voice = v; u.lang = v.lang; }
-  u.onstart = mouthOn;
+  if (v) { u.voice = v; u.lang = v.lang; } else u.lang = "en-GB";
+  sayStart(text, u.rate);
+  u.onstart = () => { mouthOn(); if (gen === speakGen && !sayBoundary) sayT0 = Date.now(); };
+  u.onboundary = e => { if (gen === speakGen && e.name !== "sentence") { sayBoundary = true; renderSay(e.charIndex); } };
   // Our own "still talking" estimate: iPhone's speechSynthesis.speaking can get stuck on true.
   const estimate = Math.min(20000, 1500 + text.length * 90 / u.rate);
   speakingUntil = Date.now() + estimate;
@@ -629,7 +707,8 @@ function speak(text, onDone, opts = {}) {
   const finish = () => {
     if (finished) return; finished = true;
     clearTimeout(fallback);
-    speakingUntil = 0; mouthOff(); onDone && onDone();
+    if (gen === speakGen) { speakingUntil = 0; sayEnd(); mouthOff(); }   // unless a newer line cut this one off
+    onDone && onDone();
     continueConvo();                                     // conversation mode: listen again
   };
   // iPhone sometimes never reports the end of speech: don't let that stall everything.
@@ -954,7 +1033,6 @@ function replyOffline(userText) {
     (reply.remember || []).forEach(f => { if (!brain.memory.includes(f)) brain.memory.push(f); });
     save();
     setMood(reply.emotion || "neutral");
-    show(`<b>${esc(brain.name)}:</b> ${esc(reply.say)}`);
     speak(reply.say, () => setTimeout(() => setMood("neutral"), 1200));
   }, 500);
 }
@@ -1036,7 +1114,6 @@ async function think(userText, image) {
     save();
 
     setMood(reply.emotion || "neutral");
-    show(`<b>${esc(brain.name)}:</b> ${esc(reply.say || "…")}`);
     speak(reply.say || "Hmm.", () => setTimeout(() => setMood("neutral"), 1200));
   } catch (err) {
     brain.history.pop();
@@ -1065,7 +1142,6 @@ const camLabel = f => f === "environment" ? "back" : "front";
 function noBrainForEyes() {
   setMood("sad");
   const line = `I am afraid I need my AI brain to see, ${addr()}. An API key in settings will do it.`;
-  show(`<b>${esc(brain.name)}:</b> ${esc(line)}`);
   speak(line, () => setTimeout(() => setMood("neutral"), 1200));
 }
 
@@ -1375,7 +1451,6 @@ function goDrowsy() {
   sleepState = "drowsy"; drowsySince = Date.now();
   setMood("sleepy"); lookAt(0, 0);
   const line = `Do forgive me, ${addr()}. I may rest my eyes for a moment.`;
-  show(`<b>${esc(brain.name)}:</b> ${esc(line)}`);
   speak(line, null, { volume: 0.4, rate: 0.8, pitch: (brain.pitch ?? 0.9) * 0.85 });
 }
 function spawnZ() {
@@ -1416,7 +1491,6 @@ function wake(after) {
     document.body.classList.remove("waking");
     if (sleepState !== "awake") return;
     const line = pick(WAKE_LINES());
-    show(`<b>${esc(brain.name)}:</b> ${esc(line)}`);
     speak(line, finish);
     setTimeout(finish, 7000);                            // safety net if speech never reports back
   }, 1900);
@@ -1640,7 +1714,7 @@ function greetFace() {
   if (mood !== "neutral" || busy || listening || capturing || isSpeaking() || waking) return;
   setMood("happy"); chirp();                            // soft tone, no speech
   const tod = timeOfDay();
-  show(`<b>${esc(brain.name)}:</b> ${esc(tod === "late" ? `Still up, ${addr()}?` : `Good ${tod}, ${addr()}.`)}`);
+  mouthSay(tod === "late" ? `Still up, ${addr()}?` : `Good ${tod}, ${addr()}.`);
   setTimeout(() => { if (mood === "happy") setMood("neutral"); }, 1200);
 }
 
