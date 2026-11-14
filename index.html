@@ -165,7 +165,31 @@
     font-size: 14px; color: var(--muted); opacity: 0; transition: opacity .6s; pointer-events: none;
   }
   #hint.on { opacity: .85; }
-  body.dock-open #hint, body.typing #hint { opacity: 0; }
+  body.dock-open #hint, body.typing #hint, body.ringing #hint { opacity: 0; }
+  /* Timer countdown ring: bottom-right corner, faint; tap for the label (section 13) */
+  #tring { position: fixed; right: calc(12px + env(safe-area-inset-right)); bottom: calc(12px + env(safe-area-inset-bottom));
+           z-index: 7; width: 48px; height: 48px; padding: 4px; border: none; background: transparent; opacity: .5;
+           cursor: pointer; display: none; -webkit-tap-highlight-color: transparent; }
+  body.timing #tring { display: block; }
+  body.dock-open #tring, body.typing #tring, body.dash-open #tring, body.ringing #tring, body.previewing #tring { display: none; }
+  #tring svg { width: 40px; height: 40px; transform: rotate(-90deg); display: block; }
+  #tring circle { fill: none; stroke-width: 2.5; }
+  .tr-bg { stroke: rgba(168,212,255,.15); }
+  .tr-fg { stroke: var(--eye); stroke-linecap: round; stroke-dasharray: 100.53; transition: stroke-dashoffset 1s linear; }
+  #tringTxt { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+              font-size: 11px; color: var(--eye); font-variant-numeric: tabular-nums; }
+  #tring[data-more]::after { content: attr(data-more); position: absolute; top: -2px; right: -2px; font-size: 10px; color: var(--muted); }
+  /* A timer going off: a large caption, readable from across the room (above the dashboard, below settings) */
+  #ringCap { position: fixed; left: 50%; bottom: calc(16vh + env(safe-area-inset-bottom)); transform: translateX(-50%);
+             z-index: 65; width: max-content; max-width: min(calc(100vw - 32px), 560px); padding: 16px 22px; border-radius: 20px;
+             text-align: center; background: rgba(5,9,12,.9); border: 1px solid rgba(168,212,255,.35); display: none;
+             cursor: pointer; animation: ringGlow 2.4s ease-in-out infinite; }
+  body.ringing #ringCap { display: block; }
+  #ringKind { font-size: 13px; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
+  #ringText { font-size: 26px; line-height: 1.3; color: var(--text); margin-top: 4px; overflow-wrap: anywhere; }
+  #ringHint { font-size: 13px; color: var(--muted); margin-top: 8px; }
+  @keyframes ringGlow { 50% { box-shadow: 0 0 28px rgba(168,212,255,.25); border-color: rgba(168,212,255,.6); } }
+  @media (prefers-reduced-motion: reduce) { #ringCap { animation: none; } }
 
   /* Old buttons stay in the page (the logic uses them) but are never shown. */
   #mic, #look, #gear { display: none !important; }
@@ -361,9 +385,9 @@
   #dashTabs { display: flex; padding: 0 10px; border-bottom: 1px solid #1d2a31; touch-action: none; }
   #dashTabs button {
     flex: 1 1 0; min-width: 0; min-height: 46px; padding: 0; border: none; background: transparent; color: var(--muted);
-    font-size: 14px; font-family: inherit; border-bottom: 2px solid transparent; cursor: pointer;   /* six tabs must fit a phone */
+    font-size: 13px; font-family: inherit; border-bottom: 2px solid transparent; cursor: pointer;   /* seven tabs must fit a phone */
   }
-  @media (max-width: 350px) { #dashTabs { padding: 0 4px; } #dashTabs button { font-size: 12.5px; } }
+  @media (max-width: 360px) { #dashTabs { padding: 0 2px; } #dashTabs button { font-size: 11.5px; } }
   #dashTabs button[aria-selected="true"] { color: var(--text); border-bottom-color: var(--accent); }
   #dashBody { flex: 1; overflow-y: auto; padding: 12px 16px 24px; overscroll-behavior: contain;
               -webkit-overflow-scrolling: touch; user-select: text; -webkit-user-select: text; }
@@ -386,6 +410,11 @@
   .ev.t-error .tag { color: #ff8a80; }
   .ev.t-search .tag { color: #c9a8ff; }
   .ev.t-remark .tag { color: #f2d98a; }       .ev.t-mood .tag { color: #8fd3d0; }
+  .ev.t-timer .tag { color: #f6c48f; }
+  /* Timers tab */
+  .note.tmr.ring { border-color: rgba(168,212,255,.55); }
+  .tkind { font-size: 12px; color: var(--muted); border: 1px solid #22323a; border-radius: 10px; padding: 1px 8px; white-space: nowrap; }
+  .tmeta { color: var(--muted); font-size: 14px; font-variant-numeric: tabular-nums; }
   .ev.t-ignored .txt { color: var(--muted); }
   .faint { opacity: .45; font-style: italic; }
   .ev-links { display: flex; flex-direction: column; gap: 2px; margin-top: 4px; }
@@ -505,6 +534,16 @@
   <div id="tap" role="button" aria-label="Tap to talk"></div>
   <div id="caption" aria-live="polite"></div>
   <div id="hint">Tap my face to talk · swipe up for more</div>
+  <!-- Timers (section 13): a small countdown ring in the corner, and a large caption while one goes off -->
+  <button id="tring" aria-label="Timer running">
+    <svg viewBox="0 0 40 40" aria-hidden="true"><circle class="tr-bg" cx="20" cy="20" r="16"/><circle class="tr-fg" id="tringArc" cx="20" cy="20" r="16"/></svg>
+    <span id="tringTxt"></span>
+  </button>
+  <div id="ringCap" role="alert">
+    <div id="ringKind"></div>
+    <div id="ringText"></div>
+    <div id="ringHint">Tap here, or say "thank you"</div>
+  </div>
   <div id="version"></div>
 
   <div id="face">
@@ -565,6 +604,7 @@
       <div id="dashGrip" aria-hidden="true"><span></span></div>
       <div id="dashTabs" role="tablist" aria-label="Dashboard sections">
         <button role="tab" id="tab-notes" data-tab="notes" aria-controls="p-notes">Notes</button>
+        <button role="tab" id="tab-timers" data-tab="timers" aria-controls="p-timers">Timers</button>
         <button role="tab" id="tab-logs" data-tab="logs" aria-controls="p-logs">Logs</button>
         <button role="tab" id="tab-memory" data-tab="memory" aria-controls="p-memory">Memory</button>
         <button role="tab" id="tab-journal" data-tab="journal" aria-controls="p-journal">Journal</button>
@@ -574,6 +614,11 @@
       <div id="dashBody">
         <section class="dpanel" id="p-notes" role="tabpanel" aria-labelledby="tab-notes">
           <div id="noteList"></div>
+        </section>
+        <section class="dpanel" id="p-timers" role="tabpanel" aria-labelledby="tab-timers">
+          <div id="timerList"></div>
+          <p class="dash-note">Timers, alarms and reminders only go off while I'm open on screen: a web page can't run in the
+            background. Anything that came due while I was closed goes off when you open me again.</p>
         </section>
         <section class="dpanel" id="p-logs" role="tabpanel" aria-labelledby="tab-logs">
           <div class="chips" id="logFilters" role="group" aria-label="Show only"></div>
@@ -751,7 +796,7 @@
    1. STORAGE: everything the robot knows lives in one object,
       saved in this browser's localStorage (on the phone).
    ========================================================= */
-const APP_VERSION = "v5.9";          // keep version.json in step with this
+const APP_VERSION = "v6.0";          // keep version.json in step with this
 // iPhone bug: after rotating, fixed buttons can be drawn in one place but tappable in another.
 // Snapping the page back to the top re-syncs them.
 function resyncLayout() {
@@ -791,6 +836,7 @@ const DEFAULTS = {
   debug: false,      // show version + sleep timer bottom-left
   hintShown: false,  // first-run "tap my face" hint already shown
   snapHints: 0,      // times the "Tap to snap" hint has shown under the camera bubble (max 3)
+  timerHint: false,  // the "timers only go off while I'm on screen" caption has been shown
   convo: true,       // keep listening after each reply
   webSearch: true,   // OpenRouter web search server tool (only used with an API key)
   searchEngine: "perplexity",   // "perplexity" | "auto" | "exa" (openrouter:web_search engine)
@@ -868,13 +914,18 @@ let logDb = null, logMem = [];
 const logListeners = [];
 const logReady = new Promise(res => {
   try {
-    const req = indexedDB.open("winslowLog", 2);           // v2 adds the journal store
+    const req = indexedDB.open("winslowLog", 3);           // v2 adds the journal store, v3 timers
     req.onupgradeneeded = () => {
       const db = req.result;
       if (!db.objectStoreNames.contains("events")) db.createObjectStore("events", { keyPath: "id", autoIncrement: true });
       if (!db.objectStoreNames.contains("journal")) db.createObjectStore("journal", { keyPath: "date" });
+      if (!db.objectStoreNames.contains("timers")) db.createObjectStore("timers", { keyPath: "id" });
     };
-    req.onsuccess = () => { logDb = req.result; res(); };
+    req.onsuccess = () => {
+      logDb = req.result;
+      logDb.onversionchange = () => { try { logDb.close(); } catch {} logDb = null; };   // let a newer copy (another tab) upgrade
+      res();
+    };
     req.onerror = req.onblocked = () => res();           // no IndexedDB: keep events in memory instead
   } catch { res(); }
 });
@@ -959,6 +1010,8 @@ function countChat(ai, cost) {
 }
 // Brain dashboard state (section 10). Declared early because the camera and AI code check it.
 let dashTab = "logs", sensesStream = null;
+// Timers, alarms and reminders (section 13). Declared early because listening, sleep and remarks check them.
+let tItems = [], ringing = [];
 // Dream state (section 12). `dreaming` = one is running; `dreamFace` = the closed-eyes look is showing.
 let dreaming = false, dreamFace = false;
 
@@ -1347,7 +1400,7 @@ const LISTEN_ORDER = ["strict", "normal", "relaxed"];
 const listenKey = () => LISTEN_ORDER.includes(brain.sensitivity) ? brain.sensitivity : "normal";
 const listenLevel = () => LISTEN_LEVELS[listenKey()];
 const SHORT_CMD_RE = /^(stop|yes|no|yeah|yep|yup|nope|ok|okay|thanks|thank you|close|cancel|done|exit|hello|hi|hey|bye|goodbye|goodnight|help)$/;
-const DASH_WORD_RE = /^(notes?|logs?|memory|journal|senses|status)$/;
+const DASH_WORD_RE = /^(notes?|timers?|logs?|memory|journal|senses|status)$/;
 const MOVE_RE = /\b(spin|jump|walk|move|drive|roll|dance|come here|follow me|turn (?:around|left|right)|go (?:forward|forwards|back|backwards|left|right)|grab|pick (?:it |that |this )?up|stand up|sit down)\b/i;
 const YES_RE = /^(yes|yeah|yep|yup|correct|right|that'?s right|i did|indeed|exactly|affirmative|sure|ok|okay)\b/;
 const NO_RE = /^(no|nope|nah|i didn'?t|i did not|wrong|incorrect|negative|never ?mind|cancel)\b/;
@@ -1403,8 +1456,9 @@ function judgeHeard(parts) {
     return { ok: false, text, conf, why: `no face in view in the last ${L.faceMs / 1000} seconds` };
   // A yes or no to an open "Did you say…?" needn't carry the name or be two words long.
   const confirming = !!pendingConfirm && Date.now() - pendingConfirm.at < CONFIRM_MS;
-  const answer = confirming && (YES_RE.test(plainWords(text)) || NO_RE.test(plainWords(text)));
-  if (brain.noisy && !confirming) {
+  const answer = (confirming && (YES_RE.test(plainWords(text)) || NO_RE.test(plainWords(text)))) ||
+    (ringing.length > 0 && isDismissal(text));             // "thank you" / "stop" to a ringing timer, too
+  if (brain.noisy && !answer && !confirming) {
     const n = findName(text);
     if (!n.found) return { ok: false, text, conf, why: `noisy room mode: didn't hear "${brain.name}"` };
     named = true; text = n.text || text;                   // just the name on its own: let him answer to it
@@ -1525,7 +1579,7 @@ function openMic(auto) {
       if (convo) {                                       // keep listening, but not for ever in a noisy room
         if (++convoIgnored < CONVO_MAX_IGNORED) setTimeout(() => { if (convo && !listening) startListening(true); }, 300);
         else endConvo("Chat paused. Tap my face when you want to talk again.");
-      } else if (!brain.debug) show("I didn't catch that. Tap my face and try again.");
+      } else if (!brain.debug && !ringing.length) show("I didn't catch that. Tap my face and try again.");
       return;
     }
     if (autoBlocked) { endConvo("Tap my face to keep talking."); return; }
@@ -1534,7 +1588,7 @@ function openMic(auto) {
       else endConvo("Chat paused. Tap my face when you want to talk again.");
       return;
     }
-    if (caption.textContent === "Listening…") show("I didn't catch that. Tap my face and try again.");
+    if (caption.textContent === "Listening…" && !ringing.length) show("I didn't catch that. Tap my face and try again.");
   };
   try { rec.start(); }
   catch { rec = null; if (auto) endConvo("Tap my face to keep talking."); return; }
@@ -1561,6 +1615,7 @@ window.addEventListener("pagehide", releaseMic);
 micBtn.addEventListener("click", toggleMic);
 function toggleMic() {
   unlockSpeech();
+  if (ringing.length) { ringTap(); return; }            // a timer is going off: a tap answers it (section 13)
   bumpIdle();                                            // talking counts as camera-preview activity
   if (convo || listening) {                              // tap again = stop the conversation
     const wasListening = listening;
@@ -1616,7 +1671,7 @@ Sometimes your human shows you a photo from your camera (your eyes). React to wh
 When a photo comes with a message, answer what your human actually said. Only describe the scene if they ask about it or something new shows up. Never repeat a description, rating or line you already said earlier in this chat: say something new and keep the conversation moving.
 
 ALWAYS reply with ONLY a JSON object, nothing else, in exactly this shape:
-{"say": "what you say out loud", "emotion": "happy|excited|sad|surprised|thinking|sleepy|neutral", "remember": [{"text": "new long-term memory", "category": "person|preference|routine|plan|promise|joke|fact", "date": null}], "used": ["id of a memory this reply drew on"], "action": null, "dashboard_tab": null, "display": null}
+{"say": "what you say out loud", "emotion": "happy|excited|sad|surprised|thinking|sleepy|neutral", "remember": [{"text": "new long-term memory", "category": "person|preference|routine|plan|promise|joke|fact", "date": null}], "used": ["id of a memory this reply drew on"], "action": null, "item": null, "dashboard_tab": null, "display": null}
 
 "display" puts something on your human's screen instead of reading it out. Use it when the answer would not make sense spoken: lists, steps, recipes, directions, code, tables or comparisons, addresses, phone numbers, long numbers, spellings, links, or anything longer than three sentences. Then set "display" to {"title": "a short title", "text": "the full content"}, written in simple markdown (## headings, - bullets, 1. numbered steps, **bold**, \`code\`, code blocks, | tables |, [links](https://...)), and keep "say" to one short sentence that gives the gist and mentions it is on screen, such as "I've put the recipe on screen, sir. Twenty minutes, start to finish." Never read the displayed content out. For ordinary conversation, leave "display" null (the usual case).
 
@@ -1624,7 +1679,14 @@ Use "remember" only for genuinely new, lasting things worth keeping, never for s
 For a plan or promise on a particular day, set "date" to that day as "YYYY-MM-DD" (work it out from today's date; never leave it as "tomorrow" or "next week") and also say the date in the text, such as "Dentist appointment on 14 November 2026", so you can remind your human on the day. For birthdays and anniversaries use "MM-DD" with no year. Otherwise "date" is null.
 
 Actions you can take. Put one in "action", or leave it null (the usual case):
-- "show_dashboard": open your brain dashboard when the user asks to see your brain, dashboard, logs, memory, journal or status. If they asked for one part, set "dashboard_tab" to "notes" (things you put on screen), "logs", "memory", "journal" (your diary, one entry a day), "senses" or "status"; otherwise leave it null. Say a short line as you open it.${dashIsOpen() ? `
+- "show_dashboard": open your brain dashboard when the user asks to see your brain, dashboard, logs, memory, journal or status. If they asked for one part, set "dashboard_tab" to "notes" (things you put on screen), "timers" (timers, alarms and reminders), "logs", "memory", "journal" (your diary, one entry a day), "senses" or "status"; otherwise leave it null. Say a short line as you open it.
+- "set_timer": a countdown. Add "item": {"label": "short name such as pasta, or null", "seconds": the length in seconds}.
+- "set_alarm": wake your human or sound at a clock time. Add "item": {"label": null, "at": "YYYY-MM-DDTHH:MM"}.
+- "set_reminder": remind your human of something at a time. Add "item": {"label": "what to remind them of, as a short instruction such as call Mum or order the wheels", "at": "YYYY-MM-DDTHH:MM"}.
+- "cancel_item": cancel one. Add "item": {"kind": "timer|alarm|reminder|null", "label": "which one, or all"}.
+- "list_items": say what is set. Add "item": {"kind": "timer|alarm|reminder|null"}.
+Write every "at" in your human's local time (the date and time above), never UTC; work out "tomorrow morning" (9:00), "this evening" (18:00), "at 5" (the next 5 o'clock that makes sense) and so on. Your own program writes the confirmation, so for these five actions "say" can simply be "Very good."
+Timers, alarms and reminders currently set: ${timerPromptText()}${dashIsOpen() ? `
 Your brain dashboard is open right now, on the ${dashTab} tab.` : ""}`;
 }
 
@@ -1841,9 +1903,9 @@ function localReply(text) {
   // Brain dashboard: "show me your brain", "open your dashboard", "show your logs",
   // "what's in your memory", "status report"
   if (!/\b(close|hide|shut|exit)\b/.test(t) &&
-      (/\b(show|open|see|pull up|bring up|let me see)\b.*\b(brain|dashboard|logs?|memory|memories|journal|diary|status|senses|notes?)\b/.test(t) ||
+      (/\b(show|open|see|pull up|bring up|let me see)\b.*\b(brain|dashboard|logs?|memory|memories|journal|diary|status|senses|notes?|timers?)\b/.test(t) ||
        /what'?s in (your|ur) (memory|head|brain)|status report|\bdashboard\b|\bshow (me )?(that|it) again\b/.test(t))) {
-    const tab = /\blogs?\b/.test(t) ? "logs" : /memor/.test(t) ? "memory" : /\b(journal|diary)\b/.test(t) ? "journal" : /\bsenses?\b/.test(t) ? "senses" :
+    const tab = /\btimers?\b/.test(t) ? "timers" : /\blogs?\b/.test(t) ? "logs" : /memor/.test(t) ? "memory" : /\b(journal|diary)\b/.test(t) ? "journal" : /\bsenses?\b/.test(t) ? "senses" :
                 /\bstatus\b/.test(t) ? "status" : /\bnotes?\b|\bagain\b/.test(t) ? "notes" : null;
     return { say: pick([`Certainly, ${a}. Do mind the cobwebs.`, `My brain, ${a}, laid bare. Try not to judge.`,
                         `Right away, ${a}. Everything I know, more or less.`,
@@ -1947,7 +2009,10 @@ let photoSentThisPreview = false;                       // reset each time the p
 
 let busy = false;
 async function think(userText, image) {
-  if (busy || capturing) return;
+  if (busy || capturing) {                               // still answering: only "thank you" to a ringing timer gets through
+    if (ringing.length && isDismissal(userText)) { logEvent("heard", userText); dismissRing("voice"); }
+    return;
+  }
   // Answering "Did you say…?": yes acts on what was half-heard, no drops it, anything else is a fresh request.
   if (pendingConfirm) {
     const pc = pendingConfirm, t = plainWords(userText), short = t.split(" ").length <= 4;
@@ -1964,6 +2029,8 @@ async function think(userText, image) {
   }
   logEvent("heard", userText);
   heardHook(userText);                                   // mood from the words; they're here and talking (section 11)
+  // Timers, alarms and reminders ("set a timer for 20 minutes", "wake me at 7"), with or without the AI (section 13).
+  if (timerCommand(userText)) return;
   // "Forget that" and "read me yesterday's journal" are handled here, with or without the AI.
   if (memoryCommand(userText)) return;
   // With the dashboard open, short commands ("show memory", "scroll down", "that'll be all") act on it directly.
@@ -2098,6 +2165,8 @@ async function think(userText, image) {
     reply.display = displayFrom(reply);
     // Spoken text: no links or citation marks, and "9 out of 10" rather than "9/10".
     reply.say = cleanSay(reply.say).replace(/(?<![\d.\/])(\d+(?:\.\d+)?)\s*\/\s*(10|100)\b(?!\/)/g, "$1 out of $2");
+    // A timer, alarm or reminder action: the confirmation is worked out here, so the time he says is the time that was set.
+    if (TIMER_ACTIONS.includes(reply.action)) { reply.say = aiTimerAction(reply); reply.action = null; reply.display = null; }
     // Log the search with its sources (shown in the dashboard, never spoken). If it found nothing,
     // Winslow must not answer from memory: he says he couldn't confirm it.
     if (useSearch && si.ran) {
@@ -2547,7 +2616,7 @@ let lastActivity = Date.now(), drowsySince = 0, waking = false, zTimer = null;
 
 function poke() { lastActivity = Date.now(); }
 function sleepBlocked() {
-  return listening || busy || capturing || camOpening || previewOpen() || waking || dashIsOpen() ||
+  return ringing.length > 0 || listening || busy || capturing || camOpening || previewOpen() || waking || dashIsOpen() ||
     isSpeaking() || panel.classList.contains("open") || (dreaming && sleepState === "awake");
 }
 
@@ -2578,7 +2647,7 @@ function goAsleep() {
 function stopZs() { clearInterval(zTimer); zTimer = null; zzz.innerHTML = ""; }
 
 // Returns true if Winslow was sleeping (so the triggering tap should only wake it).
-function wake(after) {
+function wake(after, opts = {}) {                       // opts.quiet: no wake-up line (an alarm is about to speak)
   if (sleepState === "awake") return false;
   if (sleepState === "asleep") nudgeMood(0, 0.08, "a nap", true);   // a proper sleep leaves him a little fresher
   dreamFace = false;                                     // a dream in progress carries on behind the scenes
@@ -2598,6 +2667,7 @@ function wake(after) {
   setTimeout(() => {
     document.body.classList.remove("waking");
     if (sleepState !== "awake") return;
+    if (opts.quiet) { finish(); return; }
     // Someone just arrived: a queued "good morning" or "welcome back" is the wake-up line instead.
     const greet = wakeRemark();
     dropPendingRemark();                                 // either way, they've been greeted
@@ -2693,7 +2763,7 @@ function verNewer(a, b) {                    // is version a newer than version 
 })();
 // Idle = nothing he is doing would be cut off. (When the body exists, "not moving" joins this list.)
 function updIdle() {
-  return !document.hidden && !listening && !rec && !convo && !busy && !capturing && !camOpening && !isSpeaking() &&
+  return !document.hidden && !ringing.length && !listening && !rec && !convo && !busy && !capturing && !camOpening && !isSpeaking() &&
     !waking && !dreaming && !remarkBusy && !panel.classList.contains("open") && document.activeElement !== typed;
 }
 function reloadTo(ver, isUpdate) {
@@ -3009,8 +3079,8 @@ if (window.visualViewport) {
        AI's "show_dashboard" action, or the offline brain. Tabs: Logs,
        Memory, Senses, Status. Never shows the API key.
    ========================================================= */
-const DASH_TABS = ["notes", "logs", "memory", "journal", "senses", "status"];
-const LOG_TYPES = { heard: "Heard", said: "Said", saw: "Saw", memory: "Memory", search: "Search", remark: "Remark", mood: "Mood", ignored: "Ignored", state: "State", error: "Error" };
+const DASH_TABS = ["notes", "timers", "logs", "memory", "journal", "senses", "status"];
+const LOG_TYPES = { heard: "Heard", said: "Said", saw: "Saw", memory: "Memory", search: "Search", remark: "Remark", mood: "Mood", timer: "Timers", ignored: "Ignored", state: "State", error: "Error" };
 const dashSay = $("dashSay"), dashBody = $("dashBody"), logList = $("logList"), factList = $("factList");
 const senseVideo = $("senseVideo"), senseCamMsg = $("senseCamMsg"), dashMic = $("dashMic");
 let logFilter = "all", dashTicker = null, sensesOpening = false;
@@ -3043,6 +3113,7 @@ function dashSwitch(tab) {
   dashBody.scrollTop = 0;
   if (tab === "senses") sensesOn(); else sensesOff();
   if (tab === "notes") renderNotes();
+  if (tab === "timers") renderTimers();
   if (tab === "logs") renderLogs();
   if (tab === "memory") { memEditing = null; renderMemory(); }
   if (tab === "journal") renderJournal();
@@ -3148,6 +3219,7 @@ function dashTick() {
     if (!(camStream || trackStream || sensesStream) || (sensesStream && (camStream || trackStream))) sensesOn();
     renderSenses();
   }
+  if (dashTab === "timers") timersTick();
   if (dashTab === "status") renderStatus();
 }
 const setHtml = (el, html) => { if (el._html !== html) el.innerHTML = el._html = html; };
@@ -3416,6 +3488,7 @@ function renderStatus() {
     ["Web search", !brain.apiKey ?"Needs an API key" : searchOn() ? `On: ${SEARCH_ENGINES[engineNow()]}, 1 search per reply, 3 results` : searchBroken ? "Not available with this model" : "Off"],
     ["Search cost today (est.)", `$${(u.searchCost || 0).toFixed(4)} (${u.searches || 0} search${u.searches === 1 ? "" : "es"})`],
     ["Home city", brain.homeCity || "Not set"], ["Local time", nowText()],
+    ["Timers, alarms, reminders", (() => { const n = tItems.filter(i => i.state !== "missed").length; return n ? `${n} set (see the Timers tab)` : "None set"; })()],
     ["Body connection", "Not connected (no body yet)", true]]));
 }
 $("dashSettings").addEventListener("click", openSettings);
@@ -3470,9 +3543,9 @@ function dashCommand(text) {
     say(pick(dir === "up" || dir === "top" ? ["Up we go.", "There."] : ["Down we go.", "There.", "Scrolling."]));
     return true;
   }
-  if ((m = t.match(/\b(?:show|open|go to|switch to|see|view|back to)\b.*?\b(notes?|logs?|memor(?:y|ies)|journal|diary|senses|status)\b/) ||
-           t.match(/^(?:the |your )?(notes?|logs?|memor(?:y|ies)|journal|diary|senses|status)(?: tab)?$/))) {
-    const tab = /^log/.test(m[1]) ? "logs" : /^memor/.test(m[1]) ? "memory" : /^note/.test(m[1]) ? "notes" : /^(journal|diary)/.test(m[1]) ? "journal" : m[1];
+  if ((m = t.match(/\b(?:show|open|go to|switch to|see|view|back to)\b.*?\b(notes?|timers?|logs?|memor(?:y|ies)|journal|diary|senses|status)\b/) ||
+           t.match(/^(?:the |your )?(notes?|timers?|logs?|memor(?:y|ies)|journal|diary|senses|status)(?: tab)?$/))) {
+    const tab = /^timer/.test(m[1]) ? "timers" : /^log/.test(m[1]) ? "logs" : /^memor/.test(m[1]) ? "memory" : /^note/.test(m[1]) ? "notes" : /^(journal|diary)/.test(m[1]) ? "journal" : m[1];
     dashSwitch(tab);
     say(pick([`${tab.charAt(0).toUpperCase() + tab.slice(1)}, ${a}.`, `Here you are, ${a}.`, "Certainly."]));
     return true;
@@ -3641,7 +3714,7 @@ function heardHook(text) {
 // Never interrupt: listening, thinking, speaking, settings, camera, dashboard, typing, or just after a chat.
 function remarkBlocked() {
   const now = Date.now();
-  return document.hidden || sleepState !== "awake" || waking || listening || convo || busy || capturing || camOpening ||
+  return document.hidden || sleepState !== "awake" || waking || ringing.length > 0 || listening || convo || busy || capturing || camOpening ||
     previewOpen() || dashIsOpen() || panel.classList.contains("open") || typingOpen() || isSpeaking() || remarkBusy || dreaming ||
     now - lastSaidAt < 30000 || now - lastHeardAt < AFTER_CHAT_MS;
 }
@@ -4006,6 +4079,659 @@ document.addEventListener("visibilitychange", () => {
 });
 
 document.body.classList.toggle("debug", !!brain.debug);
+
+/* =========================================================
+   13. TIMERS, ALARMS AND REMINDERS
+   Set by voice or text ("set a timer for 20 minutes", "pasta timer, 9 minutes", "wake me at 7",
+   "remind me tomorrow morning to order wheels"), understood here by timerCommand() with or
+   without the AI, or by the AI's set_timer / set_alarm / set_reminder / cancel_item / list_items
+   actions. Times are local. Items live in IndexedDB (store "timers") so they survive reloads;
+   anything that came due while the page was closed goes off on launch, saying how late it is.
+   A web page can't run in the background, so they only go off while Winslow is on screen.
+   Going off: a chime, the pleased face and a line in character, every 30 s up to 3 times, until
+   "thank you", "stop" or a tap. Reminders in quiet hours get the chime and caption only.
+   Item: { id, kind: "timer"|"alarm"|"reminder", label, phrase (reminders: "to call Mum"),
+           due (ms), dur (timers, ms), created, state: "pending"|"ringing"|"missed", firedAt }
+   ========================================================= */
+const RING_EVERY_MS = 30000, RING_ROUNDS = 3, ASK_MS = 60000, LATE_MS = 60000, SNOOZE_MS = 9 * MIN;
+const MISSED_KEEP_MS = DAY_MS;                           // missed items stay on the Timers tab for a day
+const TIMER_ACTIONS = ["set_timer", "set_alarm", "set_reminder", "cancel_item", "list_items"];
+const KIND_NAME = { timer: "Timer", alarm: "Alarm", reminder: "Reminder" };
+let ringRound = 0, ringTimer = null, ringHeard = false, pendingAsk = null, timersSig = "";
+const capFirst = s => s ? s.charAt(0).toUpperCase() + s.slice(1) : s;
+
+/* ----- Words and numbers ----- */
+const ONES = ["zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten", "eleven", "twelve",
+  "thirteen", "fourteen", "fifteen", "sixteen", "seventeen", "eighteen", "nineteen"];
+const TENS = ["", "", "twenty", "thirty", "forty", "fifty", "sixty", "seventy", "eighty", "ninety"];
+function numWords(n) {
+  n = Math.round(n);
+  if (n < 0 || n >= 100) return String(n);
+  return n < 20 ? ONES[n] : TENS[Math.floor(n / 10)] + (n % 10 ? "-" + ONES[n % 10] : "");
+}
+// "twenty five minutes" → "25 minutes", so the patterns below only deal in digits.
+function digitsFromWords(t) {
+  const one = "one|two|three|four|five|six|seven|eight|nine";
+  const teen = "ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen";
+  const ten = "twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety";
+  return t.replace(new RegExp(`\\b(${ten})(?:[\\s-]+(${one}))?\\b|\\b(${teen}|${one})\\b`, "g"),
+    (s, a, b, c) => c ? String(ONES.indexOf(c)) : String(TENS.indexOf(a) * 10 + (b ? ONES.indexOf(b) : 0)));
+}
+// Lower case, digits, "a.m." → "am", "half an hour" → "30 minutes", "an hour" → "1 hour".
+function timeText(text) {
+  let t = " " + String(text).toLowerCase().replace(/[“”"!?,;()]/g, " ") + " ";
+  t = t.replace(/\b([ap])\.\s?m\b\.?/g, "$1m").replace(/\b([ap]) m\b/g, "$1m");
+  t = t.replace(/\bthree quarters? of an hour\b/g, "45 minutes").replace(/\b(?:a )?quarter (?:of )?an hour\b/g, "15 minutes")
+       .replace(/\bhalf (?:an |a )?hour\b/g, "30 minutes");
+  t = digitsFromWords(t);
+  t = t.replace(/\ba couple of\b|\ba couple\b/g, "2").replace(/\b(?:a|an)\s+(hour|hr|minute|min|second|sec)/g, "1 $1");
+  return t.replace(/\s+/g, " ");
+}
+// "Twenty minutes", "an hour and a half", "four minutes and twelve seconds" (seconds only under ten minutes).
+function durationWords(ms) {
+  let s = Math.max(0, Math.ceil(ms / 1000));
+  if (s >= 600) s = Math.round(s / 60) * 60;
+  const h = Math.floor(s / 3600), m = Math.floor(s % 3600 / 60), sec = s % 60;
+  const unit = (n, w) => n === 1 ? (w === "hour" ? "an hour" : `a ${w}`) : `${numWords(n)} ${w}s`;
+  if (!h && !m) return unit(sec, "second");
+  if (m === 30 && !sec) return !h ? "half an hour" : h === 1 ? "an hour and a half" : `${numWords(h)} and a half hours`;
+  const out = [];
+  if (h) out.push(unit(h, "hour"));
+  if (m) out.push(unit(m, "minute"));
+  if (sec && !h) out.push(unit(sec, "second"));
+  return out.join(" and ");
+}
+// How late: "four minutes", "two hours", "three days".
+function lateWords(ms) {
+  if (ms < HOUR) return durationWords(Math.round(ms / MIN) * MIN || MIN);
+  if (ms < DAY_MS) { const h = Math.round(ms / HOUR); return h === 1 ? "an hour" : `${numWords(h)} hours`; }
+  const d = Math.round(ms / DAY_MS); return d === 1 ? "a day" : `${numWords(d)} days`;
+}
+// "seven o'clock", "6:30" (read aloud as "six thirty"), "noon", "midnight".
+function clockWords(d) {
+  const h = d.getHours(), m = d.getMinutes(), h12 = h % 12 || 12;
+  if (!h && !m) return "midnight";
+  if (h === 12 && !m) return "noon";
+  return m ? `${h12}:${String(m).padStart(2, "0")}` : `${numWords(h12)} o'clock`;
+}
+// "seven o'clock tomorrow morning", "5:30 this afternoon", "noon on Saturday".
+function whenWords(at) {
+  const d = new Date(at), now = new Date();
+  const days = Math.round((new Date(d).setHours(0, 0, 0, 0) - new Date(now).setHours(0, 0, 0, 0)) / DAY_MS);
+  const c = clockWords(d), h = d.getHours();
+  const part = h < 5 ? "night" : h < 12 ? "morning" : h < 18 ? "afternoon" : h < 22 ? "evening" : "night";
+  if (c === "midnight") return days <= 1 ? "midnight tonight" : `midnight on ${d.toLocaleDateString("en-GB", { weekday: "long" })}`;
+  if (c === "noon") return days === 0 ? "noon today" : days === 1 ? "noon tomorrow" : `noon on ${d.toLocaleDateString("en-GB", { weekday: "long" })}`;
+  if (days === 0) return `${c} ${part === "night" ? "tonight" : "this " + part}`;
+  if (days === 1) return `${c} tomorrow ${part}`;
+  if (days < 7) return `${c} on ${d.toLocaleDateString("en-GB", { weekday: "long" })} ${part}`;
+  return `${c} on ${d.toLocaleDateString("en-GB", { weekday: "long", day: "numeric", month: "long" })}`;
+}
+// For screens: "Sat 7:00 AM", "Today 5:00 PM".
+function whenShort(at) {
+  const d = new Date(at), same = isoDay(d) === isoDay();
+  const tm = d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+  return same ? `Today ${tm}` : `${d.toLocaleDateString([], { weekday: "short", day: "numeric", month: "short" })} ${tm}`;
+}
+// The same words with the capitals they were said or typed with ("call sam" → "call Sam"), when they can be found.
+function restoreCase(s, original) {
+  if (!s) return s;
+  const i = String(original).toLowerCase().indexOf(s.toLowerCase());
+  return i >= 0 ? String(original).substr(i, s.length) : s;
+}
+// "20-minute timer", "1-hour timer", for an unnamed timer.
+function shortDur(ms) {
+  const s = Math.round((ms || 0) / 1000);
+  return s % 3600 === 0 ? `${s / 3600}-hour` : s % 60 === 0 ? `${s / 60}-minute` : `${s}-second`;
+}
+const timerName = i => i.label ? `the ${i.label}` : `the ${shortDur(i.dur)} timer`;
+// "my pills" → "your pills", for saying back.
+function youWords(s) {
+  const map = { my: "your", mine: "yours", myself: "yourself", me: "you", "i'm": "you're", "i am": "you are", i: "you" };
+  return String(s).replace(/\b(i'm|i am|myself|mine|my|me|i)\b/gi, w => map[w.toLowerCase()]);
+}
+
+/* ----- Reading durations and times (local time zone) ----- */
+const DUR_RE = /\b(\d+(?:\.\d+)?)(\s+and\s+a\s+half)?\s*(hours?|hrs?|h|minutes?|mins?|m|seconds?|secs?|s)\b(\s+and\s+a\s+half)?/g;
+function parseDuration(t) {                              // t from timeText(); { ms, hits } or null
+  let ms = 0; const hits = [];
+  for (const m of t.matchAll(DUR_RE)) {
+    const u = /^h/.test(m[3]) ? HOUR : /^m/.test(m[3]) ? MIN : 1000;
+    ms += (parseFloat(m[1]) + (m[2] || m[4] ? 0.5 : 0)) * u; hits.push(m[0]);
+  }
+  return ms >= 1000 ? { ms: Math.round(ms), hits } : null;
+}
+function parseClock(t) {                                 // { h, m, ap: "am"|"pm"|null, text } or null
+  let m;
+  const ok = (h, mm, ap, text) => h >= 0 && h <= 23 && mm >= 0 && mm < 60 ? { h, m: mm, ap: h > 12 ? null : ap || null, text } : null;
+  if ((m = t.match(/\b(?:at |for |by |around )?(noon|midday|lunchtime)\b/))) return ok(12, m[1] === "lunchtime" ? 30 : 0, "pm", m[0]);
+  if ((m = t.match(/\b(?:at |for |by |around )?midnight\b/))) return { h: 0, m: 0, ap: "am", text: m[0], midnight: true };
+  if ((m = t.match(/\b(?:at |for |by |around )?(half|quarter|\d{1,2})(?: minutes?)? (past|after|to|before) (\d{1,2})(?:\s*(am|pm|o'?clock))?\b/))) {
+    const mins = m[1] === "half" ? 30 : m[1] === "quarter" ? 15 : +m[1], back = /to|before/.test(m[2]);
+    return ok(back ? (+m[3] - 1 || 12) : +m[3], back ? 60 - mins : mins, /[ap]m/.test(m[4] || "") ? m[4] : null, m[0]);
+  }
+  if ((m = t.match(/\b(?:at |for |by |around )?(\d{1,2})(?:[:.](\d{2}))?\s*(am|pm)\b/))) return ok(+m[1], +(m[2] || 0), m[3], m[0]);
+  if ((m = t.match(/\b(?:at |for |by |around )?(\d{1,2})[:.](\d{2})\b/))) return ok(+m[1], +m[2], null, m[0]);
+  if ((m = t.match(/\b(?:at|for|by|until|till|around)\s+(\d{1,2})(?:\s+(\d{2}))?(?:\s*o'?clock)?\b(?!\s*(?:hours?|hrs?|minutes?|mins?|seconds?|secs?|days?|weeks?|people|of\b)|[:.]\d)/)))
+    return ok(+m[1], +(m[2] || 0), null, m[0]);
+  if ((m = t.match(/\b(\d{1,2})\s*o'?clock\b/))) return ok(+m[1], 0, null, m[0]);
+  return null;
+}
+function parseDay(t, now) {                              // { date (local midnight), text } or null
+  const at = add => { const d = new Date(now); d.setHours(0, 0, 0, 0); d.setDate(d.getDate() + add); return d; };
+  let m;
+  if ((m = t.match(/\b(?:the )?day after tomorrow\b/))) return { date: at(2), text: m[0], add: 2 };
+  if ((m = t.match(/\btomorrow\b/))) return { date: at(1), text: m[0], add: 1 };
+  if ((m = t.match(/\b(?:today|tonight|this (?:morning|afternoon|evening))\b/))) return { date: at(0), text: m[0], add: 0 };
+  if ((m = t.match(/\bin (\d+) days?\b/))) return { date: at(+m[1]), text: m[0], add: +m[1] };
+  if ((m = t.match(/\b(?:on |next |this |coming )?(sun|mon|tues|wednes|thurs|fri|satur)day\b/))) {
+    const wd = ["sun", "mon", "tues", "wednes", "thurs", "fri", "satur"].indexOf(m[1]);
+    const add = (wd - now.getDay() + 7) % 7 || 7;
+    return { date: at(add), text: m[0], add };
+  }
+  const ds = textDates(t);
+  if (ds.length) {
+    const x = ds[0], d = new Date(x.y || now.getFullYear(), x.m, x.d);
+    if (!x.y && d < at(0)) d.setFullYear(d.getFullYear() + 1);
+    const text = (t.match(DAY_MONTH_RE) || t.match(MONTH_DAY_RE) || t.match(ISO_DATE_RE) || [""])[0];
+    return { date: d, text: text.replace(/^/, ""), add: Math.round((d - at(0)) / DAY_MS) };
+  }
+  return null;
+}
+function parsePart(t) {                                  // morning / afternoon / evening / tonight
+  let m;
+  if ((m = t.match(/\b(?:in the |this |tomorrow )?morning\b/))) return { h: 9, ap: "am", text: m[0].replace(/^tomorrow /, "") };
+  if ((m = t.match(/\b(?:in the |this |tomorrow )?afternoon\b/))) return { h: 14, ap: "pm", text: m[0].replace(/^tomorrow /, "") };
+  if ((m = t.match(/\b(?:in the |this |tomorrow )?evening\b/))) return { h: 18, ap: "pm", text: m[0].replace(/^tomorrow /, "") };
+  if ((m = t.match(/\btonight\b|\bat night\b|\btomorrow night\b/))) return { h: 20, ap: "pm", text: m[0].replace(/^tomorrow /, "") };
+  return null;
+}
+// When, from words: { at (ms), used: [matched text] }, { past: true }, or null (no time in it).
+// "kind" matters for a bare hour: an alarm "at 7" is 7 am; a reminder "at 5" is the next 5 o'clock.
+function resolveWhen(t, kind) {
+  const now = new Date();
+  const rel = t.match(/\bin (?:about |around |another |just )?(\d+(?:\.\d+)?(?:\s+and\s+a\s+half)?\s*(?:hours?|hrs?|minutes?|mins?|seconds?|secs?)\b(?:\s+and\s+a\s+half)?(?:\s+and\s+\d+\s*(?:minutes?|mins?|seconds?|secs?)\b)?)/);
+  if (rel) { const d = parseDuration(" " + rel[1] + " "); if (d) return { at: Date.now() + d.ms, used: [rel[0]] }; }
+  const clock = parseClock(t), day = parseDay(t, now);
+  let part = parsePart(t);
+  if (!clock && !part && !day) return null;
+  if (!clock && !part) { if (kind === "alarm") return null; part = { h: 9, ap: "am", text: "" }; }   // "remind me tomorrow": 9 am
+  const used = [clock && clock.text, day && day.text, part && part.text].filter(Boolean);
+  const base = day ? new Date(day.date) : (() => { const d = new Date(now); d.setHours(0, 0, 0, 0); return d; })();
+  const at = (h, m, plusDays = 0) => { const d = new Date(base); d.setDate(d.getDate() + plusDays); d.setHours(h, m, 0, 0); return d.getTime(); };
+  if (!clock) {
+    const when = at(part.h, 0);
+    return when > Date.now() ? { at: when, used } : day ? { past: true } : { at: at(part.h, 0, 1), used };
+  }
+  let h = clock.h;
+  const ap = clock.ap || (part && part.ap) || null;
+  if (clock.midnight) return { at: at(0, 0, day ? 0 : 1), used };
+  if (ap === "pm" && h < 12) h += 12;
+  if (ap === "am" && h === 12) h = 0;
+  const bare = !ap && clock.h >= 1 && clock.h <= 12;
+  if (bare && kind !== "alarm") {
+    // A reminder "at 5": the next 5 o'clock still to come today, else tomorrow's sensible one.
+    const guess = clock.h === 12 ? 12 : clock.h <= 6 ? clock.h + 12 : clock.h;     // 1–6 → afternoon, 7–11 → morning
+    if (!day || day.add === 0) {
+      for (const hh of clock.h === 12 ? [12, 0] : [clock.h, clock.h + 12]) { const w = at(hh % 24, clock.m); if (w > Date.now()) return { at: w, used }; }
+      if (day) return { past: true };
+      return { at: at(guess, clock.m, 1), used };
+    }
+    return { at: at(guess, clock.m), used };
+  }
+  const when = at(h, clock.m);
+  if (when > Date.now()) return { at: when, used };
+  return day ? { past: true } : { at: at(h, clock.m, 1), used };   // already gone today: tomorrow
+}
+// "2026-11-15T07:00" (local) → ms, or NaN.
+function parseLocalIso(s) {
+  const m = String(s || "").match(/^(\d{4})-(\d{2})-(\d{2})[T ](\d{1,2}):(\d{2})/);
+  return m ? new Date(+m[1], +m[2] - 1, +m[3], +m[4], +m[5]).getTime() : NaN;
+}
+
+/* ----- Storage (IndexedDB "timers", with the in-memory list as the working copy) ----- */
+function itemPut(it) {
+  logReady.then(() => { try { if (logDb && logDb.objectStoreNames.contains("timers")) logDb.transaction("timers", "readwrite").objectStore("timers").put(it); } catch {} });
+}
+function itemDel(id) {
+  tItems = tItems.filter(i => i.id !== id);
+  ringing = ringing.filter(i => i.id !== id);
+  logReady.then(() => { try { if (logDb && logDb.objectStoreNames.contains("timers")) logDb.transaction("timers", "readwrite").objectStore("timers").delete(id); } catch {} });
+}
+const itemsLoaded = logReady.then(() => new Promise(res => {
+  if (!logDb || !logDb.objectStoreNames.contains("timers")) return res();
+  try {
+    const req = logDb.transaction("timers").objectStore("timers").getAll();
+    req.onsuccess = () => {
+      const ok = i => i && i.id && KIND_NAME[i.kind] && Number.isFinite(i.due);
+      tItems = [...tItems, ...(req.result || []).filter(i => ok(i) && !tItems.some(x => x.id === i.id))];
+      res();
+    };
+    req.onerror = () => res();
+  } catch { res(); }
+}));
+function itemTitle(i) {
+  if (i.kind === "timer") return i.label ? capFirst(i.label) + " timer" : capFirst(shortDur(i.dur)) + " timer";
+  if (i.kind === "alarm") return i.label ? capFirst(i.label) : "Alarm";
+  return capFirst(i.label || "Reminder");
+}
+const itemDesc = i => `${KIND_NAME[i.kind]} "${itemTitle(i)}", due ${whenShort(i.due)}`;
+function addItem(kind, due, label, extra = {}) {
+  const it = { id: "t" + Date.now().toString(36) + Math.random().toString(36).slice(2, 6), kind, label: label || "", due: Math.round(due),
+               created: Date.now(), state: "pending", ...extra };
+  tItems.push(it); itemPut(it);
+  logEvent("timer", `Set: ${itemDesc(it)}`);
+  keepScreenOn();                                        // so the phone can't lock and freeze the page before it goes off
+  updateTimerUi();
+  if (!brain.timerHint) {                               // first one ever: say plainly what a web page can't do
+    brain.timerHint = true; save();
+    setTimeout(() => show(`A word of warning, ${esc(addr())}: I can only keep time while I'm open on screen. ` +
+      "Web pages can't run in the background, so leave me open, and I'll keep the screen awake."), 600);
+  }
+  return it;
+}
+function cancelItems(list, how) {
+  list.forEach(i => { logEvent("timer", `Cancelled (${how}): ${itemDesc(i)}`); itemDel(i.id); });
+  if (!ringing.length) endRing();
+  updateTimerUi();
+}
+const active = kind => tItems.filter(i => i.state !== "missed" && (!kind || i.kind === kind)).sort((a, b) => a.due - b.due);
+
+/* ----- What he says when setting, listing and cancelling ----- */
+function timerSetLine(ms, label) {
+  if (!(ms >= 1000 && ms <= 7 * DAY_MS)) return `I didn't quite catch how long, ${addr()}.`;
+  addItem("timer", Date.now() + ms, label, { dur: ms });
+  return `${capFirst(durationWords(ms))}${label ? ` for the ${label}` : ""}, ${addr()}. ` +
+    pick(["I shall keep count.", "I shall keep count.", "Consider it done.", "I'll let you know."]);
+}
+function atSetLine(kind, at, label, phrase) {
+  if (!Number.isFinite(at)) return `I didn't quite catch the time, ${addr()}.`;
+  if (at <= Date.now()) return `That time has already passed, ${addr()}.`;
+  if (at - Date.now() > 366 * DAY_MS) return `That is rather far off, ${addr()}. Within the year, if you would.`;
+  addItem(kind, at, label, phrase ? { phrase } : {});
+  const soon = at - Date.now() < HOUR, w = soon ? `in ${durationWords(at - Date.now())}` : whenWords(at);   // "in twenty minutes"
+  if (kind === "alarm") return pick([`${capFirst(w)}, ${addr()}. I shall wake you.`, `Very good, ${addr()}. An alarm ${soon ? w : "for " + w}.`]);
+  const wp = soon ? w : "at " + w;
+  return pick([`Very good, ${addr()}. I shall remind you ${phrase} ${wp}.`, `Consider it done. I'll remind you ${phrase} ${wp}.`]);
+}
+function leftText(i) {
+  return i.kind === "timer" ? `${durationWords(i.due - Date.now())} left` : `at ${whenWords(i.due)}`;
+}
+function listLine(kind) {
+  const list = active(kind), a = addr();
+  const noun = kind ? { timer: "timers", alarm: "alarms", reminder: "reminders" }[kind] : "timers, alarms or reminders";
+  if (!list.length) return `You have no ${noun} set, ${a}.`;
+  const say = i => i.kind === "timer" ? `${timerName(i)}, ${leftText(i)}` :
+                   i.kind === "alarm" ? `an alarm ${leftText(i)}` : `a reminder ${i.phrase || "to " + i.label}, ${leftText(i)}`;
+  if (list.length === 1) return `Just the one, ${a}: ${say(list[0])}.`;
+  return `${capFirst(numWords(list.length))}, ${a}: ${list.slice(0, 5).map(say).join("; ")}.` + (list.length > 5 ? " The rest are on the Timers tab." : "");
+}
+function leftLine(t) {
+  const run = active("timer"), a = addr();
+  if (!run.length) return `There's no timer running, ${a}.`;
+  const named = run.filter(i => i.label && new RegExp(`\\b${i.label.replace(/[^a-z0-9 ]/gi, "")}\\b`, "i").test(t));
+  const list = named.length ? named : run;
+  if (list.length === 1) { const i = list[0]; return `${capFirst(durationWords(i.due - Date.now()))}${i.label ? ` on the ${i.label}` : ""}, ${a}.`; }
+  return list.map(i => `${capFirst(timerName(i))}: ${durationWords(i.due - Date.now())}.`).join(" ");
+}
+// Which item the words mean: a label in them, the only one of its kind, or all. { list } or { ask }.
+function whichItems(t, kind, all) {
+  const pool = active(kind);
+  if (all) return { list: pool };
+  const named = pool.filter(i => i.label && i.label.length > 2 && new RegExp(`\\b${i.label.replace(/[^a-z0-9 ]/gi, "")}\\b`, "i").test(t));
+  if (named.length) return { list: named };
+  if (pool.length <= 1) return { list: pool };
+  return { ask: pool };
+}
+function cancelLine(t, kind, all, how) {
+  const a = addr(), w = whichItems(t, kind, all);
+  const noun = kind || "timer, alarm or reminder";
+  if (w.ask) return `Which one, ${a}? ` + w.ask.slice(0, 4).map(i => capFirst(itemTitle(i).toLowerCase())).join(", ") + ".";
+  if (!w.list.length) return `There's no ${noun} to cancel, ${a}.`;
+  cancelItems(w.list, how);
+  return w.list.length === 1 ? pick([`Cancelled, ${a}.`, `Very good, ${a}. ${itemTitle(w.list[0])} cancelled.`])
+                             : `All ${numWords(w.list.length)} cancelled, ${a}.`;
+}
+// The AI's actions (think()): the line he says is worked out here, so it matches what was set.
+function aiTimerAction(reply) {
+  const it = reply.item && typeof reply.item === "object" ? reply.item : {};
+  const kind = KIND_NAME[it.kind] ? it.kind : null, label = String(it.label || "").trim().slice(0, 60);
+  logEvent("timer", `AI action ${reply.action}: ${JSON.stringify(it).slice(0, 200)}`);
+  if (reply.action === "set_timer") return timerSetLine(Number(it.seconds ?? it.duration_seconds) * 1000, label.toLowerCase().replace(/^the /, ""));
+  if (reply.action === "set_alarm") return atSetLine("alarm", parseLocalIso(it.at || it.datetime), /^(alarm|wake up)?$/i.test(label) ? "" : label);
+  if (reply.action === "set_reminder") {
+    let l = youWords(label.replace(/^(?:remind (?:me|you) )/i, "")).replace(/^to /i, "");
+    if (!l) return `What shall I remind you of, ${addr()}?`;
+    const phrase = /^(about|that|of) /i.test(l) ? l : "to " + l;
+    return atSetLine("reminder", parseLocalIso(it.at || it.datetime), l.replace(/^(about|that|of) /i, ""), phrase);
+  }
+  if (reply.action === "cancel_item") return cancelLine(label, kind, /^(all|everything)$/i.test(label), "AI");
+  return listLine(kind);
+}
+function timerPromptText() {
+  const list = active();
+  return list.length ? list.slice(0, 10).map(i => `${KIND_NAME[i.kind]} "${itemTitle(i)}" ${i.kind === "timer" ? `(${durationWords(i.due - Date.now())} left)` : `at ${whenShort(i.due)}`}`).join("; ") : "none.";
+}
+
+/* ----- Voice and text commands (with or without the AI). True = handled. ----- */
+const DISMISS_RE = /^(?:(?:ok(?:ay)?|right|alright|yes|yeah|oh)\s+)*(?:thanks?(?: you)?(?: very much)?|cheers|stop(?: it| that)?|dismiss|enough|that'?s enough|got it|i'?m up|i'?m awake|quiet|silence|turn (?:it )?off|switch (?:it )?off|ok(?:ay)?|understood|noted|all right)\b/;
+function isDismissal(text) {
+  const nm = brain.name.toLowerCase().replace(/[^a-z0-9 ]/g, "").trim();
+  let t = plainWords(text);
+  if (nm) t = t.replace(new RegExp(`\\b(?:hey |ok |okay )?${nm}\\b`, "g"), " ").replace(/\s+/g, " ").trim();
+  return t.split(" ").length <= 6 && (DISMISS_RE.test(t) || /\bthank(?:s| you)\b/.test(t));
+}
+function timerCommand(text) {
+  const a = addr();
+  const nm = brain.name.toLowerCase().replace(/[^a-z0-9 ]/g, "").trim();
+  let t = timeText(text);
+  if (nm) t = t.replace(new RegExp(`\\b(?:hey |ok |okay )?${nm}\\b`, "g"), " ").replace(/\s+/g, " ");
+  const answer = line => {
+    brain.history.push({ role: "user", content: text }, { role: "assistant", content: JSON.stringify({ say: line, emotion: "neutral" }) });
+    brain.history = brain.history.slice(-12);
+    countChat(false); save();
+    speak(line, () => setTimeout(() => setMood("neutral"), 1000));
+    return true;
+  };
+  // 1. One is going off: "thank you", "stop", "snooze".
+  if (ringing.length) {
+    if (/\bsnooze\b|\b(?:9|nine|ten|10|five|5) more minutes\b|\bfive more\b/.test(t)) { snoozeRing(); return true; }
+    if (isDismissal(text)) { dismissRing("voice"); return true; }
+  }
+  // 2. The answer to "For how long?" / "For what time?" / "Remind you of what?"
+  if (pendingAsk) {
+    const pa = pendingAsk; pendingAsk = null;
+    if (Date.now() - pa.t < ASK_MS) {
+      if (/^\s*(?:no|nope|cancel|never ?mind|forget it)\b/.test(t)) return answer(`Very good, ${a}.`);
+      if (pa.need === "dur") { const d = parseDuration(t); if (d) return answer(timerSetLine(d.ms, pa.label)); }
+      if (pa.need === "when") {
+        // A bare "7" or "6 30" is an answer to "For what time?"
+        let w = resolveWhen(/^\s*\d{1,2}(?:[:. ]\d{2})?\s*(?:am|pm)?\s*$/.test(t) ? " at " + t.trim() + " " : t, pa.kind);
+        if (!w) { const d = parseDuration(t); if (d && pa.kind !== "alarm") w = { at: Date.now() + d.ms }; }
+        if (w && w.past) return answer(`That time has already passed, ${a}.`);
+        if (w) return answer(pa.kind === "alarm" ? atSetLine("alarm", w.at, "") : atSetLine("reminder", w.at, pa.label, pa.phrase));
+      }
+      if (pa.need === "label") {
+        const l = youWords(t.trim().replace(/^(?:to|about|that|of)\s+/, "").replace(/[.]+$/, ""));
+        if (l) return answer(atSetLine("reminder", pa.at, l, "to " + l));
+      }
+    }
+  }
+  if (/\b(went off|go off|rang|was|were|had|did|didn't|yesterday|earlier|last time)\b/.test(t) && !/\bremind me\b|\bwake me\b/.test(t)) return false;   // talking about one, not setting one
+  const T = /\btimers?\b|\bcount ?down\b/.test(t), AL = /\balarms?\b|\bwake me\b|\bget me up\b/.test(t);
+  const RE = /\breminders?\b|\bremind me\b|\bdon'?t let me forget\b/.test(t);
+  if (!T && !AL && !RE && !/\bhow (?:long|much time)\b.*\b(left|remaining|to go)\b|\btime (?:is )?left\b/.test(t)) {
+    // "cancel the pasta" with a pasta timer running (only a label actually in the words counts)
+    const named = active().filter(i => i.label && i.label.length > 2 && new RegExp(`\\b${i.label.replace(/[^a-z0-9 ]/gi, "")}\\b`, "i").test(t));
+    if (/\b(cancel|stop|delete|remove|scrap|kill)\b/.test(t) && named.length) {
+      cancelItems(named, "voice");
+      return answer(`Very good, ${a}. ${itemTitle(named[0])} cancelled.`);
+    }
+    return false;
+  }
+  const kind = RE ? "reminder" : AL ? "alarm" : T ? "timer" : null;
+  // 3. Cancelling (never while setting one: "don't let me forget", "remind me to stop at the bank")
+  const setting = /\bremind me\b|\bdon'?t let me forget\b|\bwake me\b|\bget me up\b|\b(set|start|add|make|create)\b/.test(t);
+  if (!setting && /\b(cancel|stop|delete|remove|clear|kill|scrap|turn off|switch off|get rid of|never ?mind|forget)\b/.test(t) && !/\bremind me to (?:cancel|stop|delete|remove|clear|turn off|switch off)\b/.test(t))
+    return answer(cancelLine(t, kind, /\ball\b|\bevery(?:thing| one)?\b/.test(t), "voice"));
+  // 4. How long is left?
+  if (/\bhow (?:long|much time)\b|\btime (?:is )?left\b|\bremaining\b|\bhow'?s (?:the|my) .*timer\b/.test(t) && !RE && !AL)
+    return answer(leftLine(t));
+  // 5. What's set?
+  if (/\b(what|which|list|any|do i have|tell me|read|show|check)\b/.test(t) && !/\b(set|start|add|make|create|put on)\b.*\b(timer|alarm|reminder)\b|\bremind me\b|\bwake me\b/.test(t)) {
+    if (/\b(show|see)\b/.test(t)) setTimeout(() => openDashboard("timers"), 300);
+    else if (dashIsOpen()) dashSwitch("timers");
+    return answer(listLine(kind));
+  }
+  // 6. Setting one
+  if (RE) {
+    const w = resolveWhen(t, "reminder");
+    let rest = t;
+    (w && w.used || []).forEach(u => { rest = rest.replace(u, " "); });
+    let m = rest.match(/\b(?:remind me|don'?t let me forget)\s+(.*)$/), body = m ? m[1] : "";
+    body = body.replace(/\s+/g, " ").trim().replace(/[.]+$/, "")
+      .replace(/^(?:(?:at|on|in|by|this|next|tomorrow|today|to remind me)\s+)+/, "")
+      .replace(/(?:\s+(?:at|on|in|by|around|for|this|next|the|please|tomorrow|today|then|again))+$/, "").trim();
+    const verb = (body.match(/^(to|about|that|of)\s+/) || [])[1] || "to";
+    const core = youWords(restoreCase(body.replace(/^(?:to|about|that|of)\s+/, "").trim(), text));
+    const phrase = verb === "of" ? "about " + core : verb + " " + core;
+    if (w && w.past) return answer(`That time has already passed, ${a}.`);
+    if (!w) { pendingAsk = { need: "when", kind: "reminder", label: core, phrase, t: Date.now() };
+              return answer(core ? `When shall I remind you ${phrase}, ${a}?` : `When, ${a}? And what shall I remind you of?`); }
+    if (!core) { pendingAsk = { need: "label", at: w.at, t: Date.now() }; return answer(`And what shall I remind you of, ${a}?`); }
+    return answer(atSetLine("reminder", w.at, core, phrase));
+  }
+  if (AL && /\bwake me\b|\bget me up\b|\b(set|make|add|create|start|need|want)\b|\balarm (?:for|at)\b|^\s*alarm\b/.test(t)) {
+    const w = resolveWhen(t, "alarm");
+    if (w && w.past) return answer(`That time has already passed, ${a}.`);
+    if (!w) { pendingAsk = { need: "when", kind: "alarm", t: Date.now() }; return answer(`For what time, ${a}?`); }
+    return answer(atSetLine("alarm", w.at, ""));
+  }
+  if (T) {
+    const d = parseDuration(t);
+    let rest = t;
+    (d ? d.hits : []).forEach(h => { rest = rest.replace(h, " "); });
+    rest = rest.replace(/\s+/g, " ");
+    const STOP = /^(and|set|start|a|an|the|my|new|another|one|me|please|minute|hour|second|kitchen|quick|countdown|count|down)$/;
+    let label = "", m;
+    if ((m = rest.match(/\btimer\s+(?:for|called|named|labelled|labeled|on)\s+(?:the |my |a |an |some )?([a-z][a-z' ]*?)\s*(?:please|now|for|\.)?\s*$/))) label = m[1];
+    else if ((m = rest.match(/\b([a-z][a-z']+) timer\b/)) && !STOP.test(m[1])) label = m[1];
+    else if ((m = rest.match(/\b(?:called|named|labelled|labeled)\s+(?:the |my )?([a-z][a-z' ]{1,30}?)\s*$/))) label = m[1];
+    else if ((m = rest.match(/\bfor (?:the |my |some )([a-z][a-z' ]{1,30}?)\s*$/))) label = m[1];
+    label = restoreCase(label.trim().replace(/^(?:(?:for|the|my|a|an|some)\s+)+/, "").replace(/\s+(?:please|now|timer)$/, ""), text);
+    if (STOP.test(label) || label.length > 30) label = "";
+    if (!d) {
+      if (/\b(set|start|new|another|make|put on|need|want)\b/.test(t) || /^\s*timer\b/.test(t)) {
+        pendingAsk = { need: "dur", label, t: Date.now() };
+        return answer(`For how long, ${a}?`);
+      }
+      return false;
+    }
+    return answer(timerSetLine(d.ms, label));
+  }
+  return false;
+}
+
+/* ----- Going off ----- */
+// A gentle bell: three soft notes, rising. False when sound isn't allowed yet (no tap this visit).
+function chime() {
+  if (!audioCtx) return false;
+  try { if (audioCtx.state === "suspended") audioCtx.resume(); } catch {}
+  const t0 = audioCtx.currentTime + 0.03;
+  [[523.25, 0], [659.25, 0.28], [783.99, 0.56]].forEach(([f, dt]) => {
+    [[1, 0.09], [2, 0.018]].forEach(([mult, peak]) => {           // the note and a faint overtone
+      const o = audioCtx.createOscillator(), g = audioCtx.createGain(), t = t0 + dt;
+      o.type = "sine"; o.frequency.setValueAtTime(f * mult, t);
+      g.gain.setValueAtTime(0.0001, t);
+      g.gain.exponentialRampToValueAtTime(peak, t + 0.015);
+      g.gain.exponentialRampToValueAtTime(0.0001, t + 1.4);
+      o.connect(g).connect(audioCtx.destination);
+      o.start(t); o.stop(t + 1.45);
+    });
+  });
+  return audioCtx.state === "running";
+}
+function fireLine(i) {
+  const a = addr(), A = capFirst(a);
+  if (i.kind === "timer") {
+    const d = durationWords(i.dur || 0);
+    return i.label ? pick([`The ${i.label}, ${a}. ${capFirst(d)}, on the dot.`, `${A}, the ${i.label} timer is done.`])
+                   : pick([`Time's up, ${a}. ${capFirst(d)}, as promised.`, `${A}, your timer is done. ${capFirst(d)}.`]);
+  }
+  if (i.kind === "alarm") {
+    const h = new Date(i.due).getHours(), g = h < 12 ? "Good morning" : h < 18 ? "Good afternoon" : "Good evening";
+    return `${g}, ${a}. It is ${clockWords(new Date(i.due))}.` + (i.label ? ` ${capFirst(i.label)}.` : h < 11 ? pick([" Time to rise.", " Up we get, I'm afraid.", ""]) : "");
+  }
+  const p = i.phrase || "to " + i.label;
+  return /^to /.test(p) ? pick([`A reminder, ${a}: ${p.slice(3)}.`, `You asked me to remind you ${p}, ${a}.`]) : `You asked me to remind you ${p}, ${a}.`;
+}
+function ringLine(round) {
+  const a = addr();
+  const lines = ringing.map(i => fireLine(i) + (round === 1 && i.firedAt - i.due > LATE_MS
+    ? ` This was due ${lateWords(i.firedAt - i.due)} ago, I'm afraid, while I was off screen.` : ""));
+  const body = lines.length === 1 ? lines[0] : `${capFirst(numWords(lines.length))} things at once, ${a}. ` + lines.join(" ");
+  return round === RING_ROUNDS ? `Last call, ${a}. ${body}` : round === 2 ? `Once more, ${a}. ${body}` : body;
+}
+function showRingCap(line) {
+  const kinds = [...new Set(ringing.map(i => KIND_NAME[i.kind]))];
+  $("ringKind").textContent = kinds.join(" · ");
+  $("ringText").textContent = line;
+  document.body.classList.add("ringing");
+}
+function ringOnce(replay) {
+  if (!replay) { clearTimeout(ringTimer); ringTimer = null; }
+  ringing = ringing.filter(i => tItems.includes(i));
+  if (!ringing.length) { endRing(); return; }
+  if (document.hidden) { if (!replay) ringTimer = setTimeout(() => ringOnce(), 2000); return; }
+  if (sleepState !== "awake") { wake(() => ringOnce(replay), { quiet: true }); return; }   // an alarm wakes him first
+  hideDreamFace(); hideDock();
+  if (!replay) ringRound++;
+  const line = ringLine(ringRound);
+  const quiet = ringing.every(i => i.kind === "reminder") && inQuietHours();   // alarms and timers always sound
+  showRingCap(line);
+  setMood("happy"); lookAt(0, 0); poke();
+  ringHeard = chime() || ringHeard;
+  if (!quiet && speechUnlocked && !listening) {
+    setTimeout(() => {
+      if (!ringing.length) return;
+      speak(line, () => {
+        setTimeout(() => { if (mood === "happy") setMood("neutral"); }, 1500);
+        // Listen once for "thank you" (the phone may refuse a mic it wasn't tapped for; a tap still works).
+        if (ringing.length && SR && !listening && !convo && !busy && !document.hidden) startListening(true);
+      });
+    }, 1300);
+  } else setTimeout(() => { if (mood === "happy") setMood("neutral"); }, 4000);
+  if (replay) return;
+  if (ringRound < RING_ROUNDS) ringTimer = setTimeout(() => ringOnce(), RING_EVERY_MS);
+  else ringTimer = setTimeout(ringUnanswered, RING_EVERY_MS);
+}
+// Three rounds with no answer. If none of them could be heard (no tap yet this visit), the caption
+// stays up until a tap instead: nobody has had the chance to answer.
+function ringUnanswered() {
+  ringTimer = null;
+  if (!ringHeard) return;
+  const list = ringing.slice();
+  list.forEach(i => { i.state = "missed"; itemPut(i); logEvent("timer", `Unanswered after ${RING_ROUNDS} rings: ${itemDesc(i)}`); });
+  endRing();
+  show(`Missed: ${esc(list.map(itemTitle).join(", "))}. It's on the Timers tab.`);
+  setMood("neutral");
+}
+function endRing() {
+  clearTimeout(ringTimer); ringTimer = null;
+  ringing = []; ringRound = 0; ringHeard = false;
+  document.body.classList.remove("ringing");
+  updateTimerUi();
+}
+function hush() {                                        // stop a ring line mid-sentence
+  if (!isSpeaking() || !("speechSynthesis" in window)) return;
+  speakGen++; speechSynthesis.cancel(); speakingUntil = 0; sayEnd(0); mouthOff();
+}
+function dismissRing(how) {
+  const list = ringing.slice();
+  if (!list.length) return;
+  list.forEach(i => { logEvent("timer", `Dismissed (${how}): ${itemDesc(i)}`); itemDel(i.id); });
+  endRing(); hush();
+  if (rec && listening) { try { rec.abort(); } catch {} }
+  const ack = pick([`Very good, ${addr()}.`, `As you wish, ${addr()}.`, "Right you are."]);
+  setMood("neutral");
+  if (how === "voice" && speechUnlocked) setTimeout(() => speak(ack), AFTER_SPEECH_MS);
+  else mouthSay(ack);
+}
+function snoozeRing() {
+  const list = ringing.slice();
+  list.forEach(i => { i.state = "pending"; i.due = Date.now() + SNOOZE_MS; delete i.firedAt; itemPut(i); logEvent("timer", `Snoozed nine minutes: ${itemDesc(i)}`); });
+  endRing(); hush();
+  setTimeout(() => speak(pick([`Nine more minutes, ${addr()}. Not a second longer.`, `Very well, ${addr()}. Nine minutes.`])), AFTER_SPEECH_MS);
+}
+// A tap while one goes off: the first one this visit plays it out loud (the phone only allows sound
+// after a tap); after that, a tap answers it.
+function ringTap() {
+  poke();
+  if (!ringHeard) { ringHeard = true; ringOnce(true); return; }   // this tap has just allowed sound
+  dismissRing("tap");
+}
+$("ringCap").addEventListener("click", ringTap);
+
+/* ----- The clock: once a second ----- */
+function timerTick() {
+  const now = Date.now();
+  tItems.filter(i => i.state === "missed" && now - i.due > MISSED_KEEP_MS).forEach(i => itemDel(i.id));
+  const due = tItems.filter(i => i.state === "pending" && i.due <= now);
+  if (due.length) {
+    due.forEach(i => {
+      i.state = "ringing"; i.firedAt = now; itemPut(i);
+      logEvent("timer", `Went off: ${itemDesc(i)}` + (now - i.due > LATE_MS ? ` (${lateWords(now - i.due)} late, while Winslow was off screen)` : ""));
+    });
+    const fresh = !ringing.length;
+    ringing.push(...due);
+    if (fresh) { ringRound = 0; ringHeard = false; ringOnce(); }
+    else showRingCap(ringLine(Math.max(1, ringRound)));
+  }
+  if (tItems.some(i => i.state === "pending")) keepScreenOn();   // a phone that locks itself freezes the page
+  updateTimerUi();
+}
+function updateTimerUi() {
+  const now = Date.now(), run = active("timer").filter(i => i.state === "pending");
+  const ring = $("tring");
+  document.body.classList.toggle("timing", run.length > 0);
+  if (run.length) {
+    const i = run[0], left = Math.max(0, i.due - now), frac = i.dur ? Math.min(1, left / i.dur) : 0;
+    $("tringArc").style.strokeDashoffset = String(100.53 * (1 - frac));
+    const s = Math.ceil(left / 1000);
+    $("tringTxt").textContent = s >= 3600 ? Math.floor(s / 3600) + "h" : s >= 60 ? Math.ceil(s / 60) + "m" : s + "s";
+    if (run.length > 1) ring.dataset.more = "+" + (run.length - 1); else delete ring.dataset.more;
+    ring.setAttribute("aria-label", `${itemTitle(i)}: ${mmss(left)} left` + (run.length > 1 ? `, and ${run.length - 1} more` : ""));
+  }
+  if (dashIsOpen() && dashTab === "timers") timersTick();
+}
+$("tring").addEventListener("click", e => {
+  e.stopPropagation(); poke();
+  const run = active("timer").filter(i => i.state === "pending");
+  show(run.map(i => `${esc(itemTitle(i))}: ${mmss(i.due - Date.now())} left`).join("<br>"));
+});
+
+/* ----- Dashboard: Timers tab ----- */
+function itemWhenText(i) {
+  if (i.state === "ringing") return "Going off now";
+  if (i.state === "missed") return `Missed · was due ${whenShort(i.due)}`;
+  if (i.kind === "timer") return `${mmss(i.due - Date.now())} left · ends ${new Date(i.due).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}`;
+  return whenShort(i.due);
+}
+function renderTimers() {
+  const order = { ringing: 0, pending: 1, missed: 2 };
+  const list = tItems.slice().sort((a, b) => order[a.state] - order[b.state] || a.due - b.due);
+  timersSig = list.map(i => i.id + i.state).join();
+  $("timerList").innerHTML = list.length ? list.map(i => {
+    const act = i.state === "ringing" ? ["dismiss", "Dismiss"] : i.state === "missed" ? ["clear", "Clear"] : ["cancel", "Cancel"];
+    return `<article class="note tmr${i.state === "ringing" ? " ring" : ""}"><div class="note-head"><span class="tkind">${KIND_NAME[i.kind]}</span>` +
+      `<h3>${esc(itemTitle(i))}</h3><button class="note-copy" data-act="${act[0]}" data-id="${i.id}">${act[1]}</button></div>` +
+      `<p class="tmeta" data-left="${i.id}">${esc(itemWhenText(i))}</p></article>`;
+  }).join("") : `<p class="dash-empty">Nothing set. Try "set a timer for ten minutes", "wake me at seven" or "remind me to call Mum at five".</p>`;
+}
+function timersTick() {
+  const order = { ringing: 0, pending: 1, missed: 2 };
+  const sig = tItems.slice().sort((a, b) => order[a.state] - order[b.state] || a.due - b.due).map(i => i.id + i.state).join();
+  if (sig !== timersSig) { renderTimers(); return; }     // something added, cancelled or went off: redraw
+  document.querySelectorAll("#timerList [data-left]").forEach(el => {
+    const i = tItems.find(x => x.id === el.dataset.left);
+    if (i) { const s = itemWhenText(i); if (el.textContent !== s) el.textContent = s; }
+  });
+}
+$("timerList").addEventListener("click", e => {
+  const b = e.target.closest("button[data-act]"); if (!b) return;
+  poke();
+  const i = tItems.find(x => x.id === b.dataset.id); if (!i) return;
+  if (b.dataset.act === "dismiss") dismissRing("dashboard");
+  else if (b.dataset.act === "clear") { itemDel(i.id); renderTimers(); }
+  else { cancelItems([i], "dashboard"); renderTimers(); mouthSay(`${itemTitle(i)} cancelled.`); }
+});
+
+// Start: anything that came due while the page was closed goes off now, saying how late it is.
+itemsLoaded.then(() => {
+  tItems.forEach(i => { if (i.state === "ringing") { i.state = "pending"; delete i.firedAt; } });   // interrupted mid-ring: again
+  timerTick();
+  setInterval(timerTick, 1000);
+});
 
 // First launch only: a short hint, then never again.
 if (!brain.hintShown) {
