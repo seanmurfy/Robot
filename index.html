@@ -732,6 +732,14 @@
       <small>Makes a private link holding your API key, model, voice and settings. Open it in any browser
         (GitHub Pages, Live Server, a new phone) and Winslow is set up instantly. Bookmark it, but
         <b>never share or post it</b>: anyone with the link can use your key.</small>
+      <label>Updates</label>
+      <small>Running <b id="updRunning"></b>. Winslow checks for a newer version on opening, on coming back to the
+        screen and every 30 minutes, and reloads himself when idle. Memory, settings and the journal are kept.</small>
+      <div class="row">
+        <button id="btnCheckUpdate">Check for updates</button>
+        <button id="btnReloadNow">Reload now</button>
+      </div>
+      <small id="updMsg"></small>
       <label class="check"><input type="checkbox" id="sDebug"> Show debug info</label>
       <small id="debugLine"></small>
       <small id="settingsMsg"></small>
@@ -743,7 +751,7 @@
    1. STORAGE: everything the robot knows lives in one object,
       saved in this browser's localStorage (on the phone).
    ========================================================= */
-const APP_VERSION = "v5.8";
+const APP_VERSION = "v5.9";          // keep version.json in step with this
 // iPhone bug: after rotating, fixed buttons can be drawn in one place but tappable in another.
 // Snapping the page back to the top re-syncs them.
 function resyncLayout() {
@@ -2342,6 +2350,7 @@ document.addEventListener("visibilitychange", () => { if (document.hidden && pre
 const $ = id => document.getElementById(id);
 const panel = $("settings");
 function openSettings() {
+  renderUpdate();                                        // running version, update status (section: automatic updates)
   $("sKey").value = brain.apiKey;
   $("sModel").value = brain.model;
   $("sName").value = brain.name;
@@ -2650,6 +2659,108 @@ function sleepStatus(blocked) {
   versionEl.textContent = APP_VERSION + " · " + st;
   debugLineEl.textContent = "Version " + APP_VERSION + " · " + st;
 }
+
+/* ---------- Automatic updates ----------
+   version.json (repo root) names the newest version. It is checked on launch, on coming back to the
+   foreground and every 30 minutes. A newer one reloads the page once Winslow is idle, through a
+   ?v= URL so no cached copy is used. A reload leaves localStorage and IndexedDB untouched.
+   Loop guard: the version we reloaded for is remembered (UPD_KEY). If the page still comes up older,
+   that is logged and no reload is tried until the next 30-minute (or a manual) check. */
+const UPD_KEY = "winslowUpdate";             // { target, at } of the last update reload
+const UPD_EVERY_MS = 30 * 60000;
+let updLatest = null, updCheckedAt = 0, updStatus = "", updHold = null, updWaiting = null, updChecking = false;
+const verParts = v => String(v || "").replace(/^v/i, "").split(".").map(n => parseInt(n, 10) || 0);
+function verNewer(a, b) {                    // is version a newer than version b?
+  const x = verParts(a), y = verParts(b);
+  for (let i = 0; i < Math.max(x.length, y.length); i++) { const d = (x[i] || 0) - (y[i] || 0); if (d) return d > 0; }
+  return false;
+}
+(function afterUpdateReload() {
+  if (/[?&](v|t)=/.test(location.search)) {  // tidy the address bar (the hash is kept)
+    const q = new URLSearchParams(location.search); q.delete("v"); q.delete("t");
+    history.replaceState(null, "", location.pathname + (q.toString() ? "?" + q : "") + location.hash);
+  }
+  let r = null;
+  try { r = JSON.parse(localStorage.getItem(UPD_KEY) || "null"); } catch {}
+  if (!r || !r.target) return;
+  if (verNewer(r.target, APP_VERSION)) {
+    updHold = r.target;
+    setTimeout(() => logEvent("state", `Reloaded for ${r.target} but still running ${APP_VERSION} (an old copy was served). Will try again at the next scheduled check.`), 0);
+  } else {
+    try { localStorage.removeItem(UPD_KEY); } catch {}
+    setTimeout(() => logEvent("state", `Updated to ${APP_VERSION}`), 0);
+  }
+})();
+// Idle = nothing he is doing would be cut off. (When the body exists, "not moving" joins this list.)
+function updIdle() {
+  return !document.hidden && !listening && !rec && !convo && !busy && !capturing && !camOpening && !isSpeaking() &&
+    !waking && !dreaming && !remarkBusy && !panel.classList.contains("open") && document.activeElement !== typed;
+}
+function reloadTo(ver, isUpdate) {
+  if (isUpdate) try { localStorage.setItem(UPD_KEY, JSON.stringify({ target: ver, at: Date.now() })); } catch {}
+  try { save(); } catch {}
+  releaseMic();
+  const q = new URLSearchParams(location.search);
+  q.set("v", String(ver).replace(/^v/i, "")); q.set("t", Date.now());
+  location.replace(location.pathname + "?" + q + location.hash);
+}
+function updateWhenIdle(ver) {
+  if (updWaiting) return;
+  logEvent("state", `Version ${ver} is available; reloading when idle`);
+  let calm = 0;
+  const tick = () => {
+    calm = updIdle() ? calm + 1 : 0;
+    if (calm < 2) return;                    // idle for two checks running (about 4 s)
+    clearInterval(updWaiting);
+    show(`One moment, ${addr()}. Tidying up.`);
+    setTimeout(() => {
+      if (updIdle()) reloadTo(ver, true);
+      else { calm = 0; updWaiting = setInterval(tick, 2000); }   // something started: wait again
+    }, 1500);
+  };
+  updWaiting = setInterval(tick, 2000);
+}
+async function checkForUpdate(why) {
+  if (updChecking) return;
+  updChecking = true;
+  try {
+    const r = await fetch("version.json?t=" + Date.now(), { cache: "no-store" });
+    if (!r.ok) throw new Error("HTTP " + r.status);
+    const v = String((await r.json()).version || "");
+    if (!v) throw new Error("no version in version.json");
+    updLatest = v;
+    if (!verNewer(v, APP_VERSION)) updStatus = "Up to date.";
+    else if (updHold === v && why !== "timer" && why !== "manual")
+      updStatus = `${v} is out, but the last reload still brought up ${APP_VERSION}. Trying again at the next scheduled check.`;
+    else {
+      updHold = null;
+      updStatus = `${v} is available. Winslow reloads when he's idle (after settings are closed).`;
+      updateWhenIdle(v);
+    }
+  } catch (e) {
+    updStatus = "Couldn't check for updates (offline?).";
+  } finally {
+    updCheckedAt = Date.now(); updChecking = false; renderUpdate();
+  }
+}
+function renderUpdate() {
+  $("updRunning").textContent = APP_VERSION;
+  const when = updCheckedAt ? new Date(updCheckedAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit", second: "2-digit" }) : "not yet";
+  const dbg = brain.debug || $("sDebug").checked;
+  $("updMsg").textContent = [updStatus, dbg ? `Last checked: ${when}${updLatest ? ` (server has ${updLatest})` : ""}.` : ""].filter(Boolean).join(" ");
+}
+$("btnCheckUpdate").addEventListener("click", () => { updStatus = "Checking…"; renderUpdate(); checkForUpdate("manual"); });
+$("btnReloadNow").addEventListener("click", () => {
+  const newer = updLatest && verNewer(updLatest, APP_VERSION);
+  show(`One moment, ${addr()}. Tidying up.`);
+  setTimeout(() => reloadTo(newer ? updLatest : APP_VERSION, newer), 600);
+});
+$("sDebug").addEventListener("change", renderUpdate);
+setTimeout(() => checkForUpdate("launch"), 3000);
+setInterval(() => checkForUpdate("timer"), UPD_EVERY_MS);
+document.addEventListener("visibilitychange", () => {
+  if (!document.hidden && Date.now() - updCheckedAt > 60000) checkForUpdate("foreground");
+});
 
 setInterval(() => {
   const blocked = sleepBlocked();
