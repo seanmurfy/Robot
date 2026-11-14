@@ -12,7 +12,8 @@
     --bg: #05090c;
     /* Winslow: cool pale blue at rest; warm orange only while listening, so the two never blur together */
     --eye: #a8d4ff;
-    --glow: rgba(140, 195, 255, 0.40);
+    --glow: rgba(140, 195, 255, 0.40);       /* JS shades it slightly with Winslow's spirits (section 11) */
+    --eye-h: 31vmin;                         /* resting eye height; JS lowers it a touch when he's tired */
     --eye-bright: #d9ecff;                  /* "excited" = quietly pleased */
     --sad: #7d8fae;
     --surprised: #e4f1ff;
@@ -44,7 +45,7 @@
   /* Invisible full-screen layer under every control: tap = talk, swipe up / tap bottom = dock */
   #tap { position: fixed; inset: 0; z-index: 1; touch-action: none; }
   .eye {
-    width: 20vmin; height: 31vmin;
+    width: 20vmin; height: var(--eye-h);
     background: var(--eye);
     border-radius: 10vmin;
     box-shadow: 0 0 6vmin var(--glow), 0 0 14vmin var(--glow);
@@ -383,6 +384,7 @@
   .ev.t-saw .tag { color: #e8c48a; }         .ev.t-memory .tag { color: #9fe0b8; }
   .ev.t-error .tag { color: #ff8a80; }
   .ev.t-search .tag { color: #c9a8ff; }
+  .ev.t-remark .tag { color: #f2d98a; }       .ev.t-mood .tag { color: #8fd3d0; }
   .ev-links { display: flex; flex-direction: column; gap: 2px; margin-top: 4px; }
   .ev-links a { color: var(--accent); font-size: 13px; text-decoration: none; overflow-wrap: anywhere; padding: 3px 0; }
   .ev-links a:active { text-decoration: underline; }
@@ -468,6 +470,8 @@
   .card select { appearance: none; -webkit-appearance: none; }
   .card label.check { display: flex; align-items: center; gap: 10px; color: var(--text); font-size: 15px; margin-top: 16px; }
   .card input[type=checkbox] { width: 22px; height: 22px; padding: 0; flex-shrink: 0; accent-color: var(--accent); }
+  .quiet-times { display: flex; align-items: center; gap: 10px; margin-top: 8px; color: var(--muted); font-size: 14px; }
+  .quiet-times input { flex: 1; min-width: 0; }
   /* While following a face, JS glides the eyes every frame, so turn off the bouncy CSS transition. */
   body.following #eyes { transition: none; }
   .card small { display: block; color: var(--muted); font-size: 12px; margin-top: 4px; line-height: 1.4; }
@@ -628,6 +632,24 @@
       </select>
       <small>With nothing going on, Winslow gets sleepy after this long and falls fully asleep 3 minutes later. Any tap wakes him.</small>
 
+      <label for="sProactive">Speaks first</label>
+      <select id="sProactive">
+        <option value="off">Off</option>
+        <option value="rarely">Rarely</option>
+        <option value="sometimes">Sometimes</option>
+      </select>
+      <small>Now and then Winslow speaks without being asked: a greeting, a welcome back, a reminder of something dated in
+        his memory, a nudge to stretch, or a word about the hour. Rarely: up to 3 a day, at least 2 hours apart.
+        Sometimes: up to 6 a day, at least 45 minutes apart. Never while you're talking, or with the camera or dashboard open.
+        He can only speak aloud once you've tapped the screen since opening the app; until then his words just appear.</small>
+
+      <label class="check"><input type="checkbox" id="sQuiet"> Quiet hours</label>
+      <div class="quiet-times">
+        <input type="time" id="sQuietFrom" aria-label="Quiet hours start"> <span>to</span>
+        <input type="time" id="sQuietTo" aria-label="Quiet hours end">
+      </div>
+      <small>During these hours, anything Winslow says first appears as words only, never aloud. Replies to you are unaffected.</small>
+
       <label for="sName">Robot name</label>
       <input id="sName" type="text">
 
@@ -684,7 +706,7 @@
    1. STORAGE: everything the robot knows lives in one object,
       saved in this browser's localStorage (on the phone).
    ========================================================= */
-const APP_VERSION = "v5.5";
+const APP_VERSION = "v5.6";
 // iPhone bug: after rotating, fixed buttons can be drawn in one place but tappable in another.
 // Snapping the page back to the top re-syncs them.
 function resyncLayout() {
@@ -725,6 +747,12 @@ const DEFAULTS = {
   webSearch: true,   // OpenRouter web search server tool (only used with an API key)
   searchEngine: "perplexity",   // "perplexity" | "auto" | "exa" (openrouter:web_search engine)
   homeCity: "",      // optional, for local answers
+  proactive: "rarely",   // "Speaks first": "off" | "rarely" | "sometimes" (section 11)
+  quietHours: true,      // during quiet hours, remarks are words on screen only, never spoken
+  quietFrom: "22:00",
+  quietTo: "07:00",
+  feel: { spirits: 0, energy: 0, t: 0 },   // slow mood, -1..1 each, drifts back to 0 (section 11)
+  pro: {},               // speaking-first bookkeeping: today's count, last remark, presence (section 11)
   character: CHARACTER_VERSION
 };
 function load() {
@@ -1025,7 +1053,8 @@ let speakGen = 0;
 function speak(text, onDone, opts = {}) {
   hideDock();
   const gen = ++speakGen;
-  if (!opts._waited && !opts.preview) logEvent("said", text);
+  if (!opts._waited && !opts.preview && !opts.nolog) logEvent("said", text);
+  lastSaidAt = Date.now();
   if (!("speechSynthesis" in window)) { mouthSay(text, 1500 + text.length * 80); onDone && onDone(); return; }
   if (!opts._waited && !speechSynthesis.getVoices().length) {
     speakingUntil = Date.now() + 2500;                   // counts as talking while we wait
@@ -1058,7 +1087,7 @@ function speak(text, onDone, opts = {}) {
   u.onend = u.onerror = finish;
   speechSynthesis.speak(u);
 }
-let speakingUntil = 0;
+let speakingUntil = 0, lastSaidAt = 0;
 const isSpeaking = () => Date.now() < speakingUntil;
 
 /* =========================================================
@@ -1208,6 +1237,8 @@ ${facts}
 
 Right now it is ${nowText()}.${brain.homeCity ? ` Your human lives in or near ${brain.homeCity}; use that for anything local (weather, opening hours, events) unless they name another place.` : ""}
 
+${moodPrompt()}
+
 ${searchOn() && !noSearch ? `CURRENT FACTS: you have a web search tool. Use it for anything time-sensitive or that may have changed since your training: sports fixtures, schedules and scores, weather, news, prices, opening hours, release dates, who currently holds a role, and anything "latest", "today", "tonight", "this week" or "next". Answer from what the search finds. If the search fails or finds nothing useful, say so plainly in character, for example "I'm afraid I can't confirm that at present, ${addr()}." Never guess or invent current facts.
 You get ONE search per reply, so make the query count. Write it self-contained: replace words like "they", "he", "she", "it", "there" and "next" with the actual names from the conversation, and for schedules or fixtures include the month and year, for example "New England Patriots next game ${new Date().toLocaleDateString("en-GB", { month: "long", year: "numeric" })}".${recentSearchText()}`
   : `CURRENT FACTS: you cannot search the web right now. For anything time-sensitive (scores, schedules, weather, news, prices, opening hours, anything "latest"), do not guess: say plainly, in character, that you can't confirm it at present, for example "I'm afraid I can't confirm that at present, ${addr()}." You may still use the date and time above.`}
@@ -1227,7 +1258,7 @@ ALWAYS reply with ONLY a JSON object, nothing else, in exactly this shape:
 
 "display" puts something on your human's screen instead of reading it out. Use it when the answer would not make sense spoken: lists, steps, recipes, directions, code, tables or comparisons, addresses, phone numbers, long numbers, spellings, links, or anything longer than three sentences. Then set "display" to {"title": "a short title", "text": "the full content"}, written in simple markdown (## headings, - bullets, 1. numbered steps, **bold**, \`code\`, code blocks, | tables |, [links](https://...)), and keep "say" to one short sentence that gives the gist and mentions it is on screen, such as "I've put the recipe on screen, sir. Twenty minutes, start to finish." Never read the displayed content out. For ordinary conversation, leave "display" null (the usual case).
 
-Use "remember" only for genuinely new, lasting facts worth keeping (names, likes, plans, important events). Usually it is an empty list.
+Use "remember" only for genuinely new, lasting facts worth keeping (names, likes, plans, important events). Usually it is an empty list. For anything happening on a particular day, write the actual date into the fact (never "tomorrow" or "next week"), such as "Dentist appointment on 14 November 2026", so you can remind your human on the day; for birthdays and anniversaries leave out the year, such as "Mum's birthday is 3 March".
 
 Actions you can take. Put one in "action", or leave it null (the usual case):
 - "show_dashboard": open your brain dashboard when the user asks to see your brain, dashboard, logs, memory or status. If they asked for one part, set "dashboard_tab" to "notes" (things you put on screen), "logs", "memory", "senses" or "status"; otherwise leave it null. Say a short line as you open it.${dashIsOpen() ? `
@@ -1536,6 +1567,7 @@ function replyOffline(userText) {
     const reply = localBrain(userText);
     (reply.remember || []).forEach(rememberFact);
     countChat(false);
+    nudgeMood(0.02, 0, "", true);
     save();
     setMood(reply.emotion || "neutral");
     speak(reply.say, () => setTimeout(() => setMood("neutral"), 1200));
@@ -1553,6 +1585,7 @@ let busy = false;
 async function think(userText, image) {
   if (busy || capturing) return;
   logEvent("heard", userText);
+  heardHook(userText);                                   // mood from the words; they're here and talking (section 11)
   // With the dashboard open, short commands ("show memory", "scroll down", "that'll be all") act on it directly.
   if (dashIsOpen() && dashCommand(userText)) return;
   // A "look" phrase opens the camera and snaps. With the preview already open, a fresh frame
@@ -1574,6 +1607,7 @@ async function think(userText, image) {
       logEvent("saw", "Took a photo for: " + userText);
     } catch (err) {
       logEvent("error", "Camera: " + (err && (err.message || err.name)));
+      nudgeMood(-0.04, 0, "a camera fault");
       setMood("sad"); show(cameraErrorText(err));
       setTimeout(() => setMood("neutral"), 2000);
       return;
@@ -1713,6 +1747,7 @@ async function think(userText, image) {
       reply.remember.filter(f => typeof f === "string" && f.trim()).forEach(f => rememberFact(f.trim()));
     }
     countChat(true, replyCost);
+    nudgeMood(reply.display || reply.action ? 0.05 : 0.02, -0.01, "", true);   // a job done (talking tires him a little)
     save();
 
     setMood(reply.emotion || "neutral");
@@ -1720,6 +1755,7 @@ async function think(userText, image) {
     doAction(reply);
   } catch (err) {
     logEvent("error", "Brain: " + err.message);
+    nudgeMood(-0.08, 0, "a brain error");
     brain.history.pop();
     setMood("sad");
     show("Brain error: " + esc(scrub(err.message)) +
@@ -1946,6 +1982,10 @@ function openSettings() {
   $("sCity").value = brain.homeCity || "";
   $("sDebug").checked = !!brain.debug;
   $("sSleep").value = String([0, 2, 5, 10].includes(brain.sleepAfter) ? brain.sleepAfter : 2);
+  $("sProactive").value = proLevel();
+  $("sQuiet").checked = brain.quietHours !== false;
+  $("sQuietFrom").value = validTime(brain.quietFrom) ? brain.quietFrom : DEFAULTS.quietFrom;
+  $("sQuietTo").value = validTime(brain.quietTo) ? brain.quietTo : DEFAULTS.quietTo;
   $("sPersona").value = brain.persona;
   $("sMemory").value = brain.memory.join("\n");
   $("sPitch").value = brain.pitch ?? 0.9;
@@ -2028,6 +2068,10 @@ $("btnSave").addEventListener("click", () => {
   brain.searchEngine = SEARCH_ENGINES[$("sEngine").value] ? $("sEngine").value : "perplexity";
   brain.homeCity = $("sCity").value.trim().slice(0, 80);
   brain.debug = $("sDebug").checked;
+  brain.proactive = isProLevel($("sProactive").value) ? $("sProactive").value : "rarely";
+  brain.quietHours = $("sQuiet").checked;
+  if (validTime($("sQuietFrom").value)) brain.quietFrom = $("sQuietFrom").value;
+  if (validTime($("sQuietTo").value)) brain.quietTo = $("sQuietTo").value;
   document.body.classList.toggle("debug", brain.debug);
   if (!brain.convo) endConvo();
   const followWas = !!brain.followFaces;
@@ -2067,6 +2111,11 @@ $("btnImport").addEventListener("click", async () => {
     if (brain.camera !== "environment") brain.camera = "user";
     if (![0, 2, 5, 10].includes(brain.sleepAfter)) brain.sleepAfter = 2;
     brain.followFaces = old.followFaces;                   // device-specific: a backup doesn't switch the camera on
+    if (!isProLevel(brain.proactive)) brain.proactive = "rarely";
+    brain.quietHours = brain.quietHours !== false;
+    if (!validTime(brain.quietFrom)) brain.quietFrom = DEFAULTS.quietFrom;
+    if (!validTime(brain.quietTo)) brain.quietTo = DEFAULTS.quietTo;
+    brain.feel = old.feel; brain.pro = old.pro;            // this phone's mood and remark bookkeeping stay as they are
     save(); openSettings();
     $("settingsMsg").textContent = "Backup restored.";
   } catch { $("settingsMsg").textContent = "Copy a backup first, then tap Paste backup."; }
@@ -2128,6 +2177,7 @@ function stopZs() { clearInterval(zTimer); zTimer = null; zzz.innerHTML = ""; }
 // Returns true if Winslow was sleeping (so the triggering tap should only wake it).
 function wake(after) {
   if (sleepState === "awake") return false;
+  if (sleepState === "asleep") nudgeMood(0, 0.08, "a nap", true);   // a proper sleep leaves him a little fresher
   sleepState = "awake"; waking = true; stopZs(); poke(); logEvent("state", "Woke up");
   if ("speechSynthesis" in window) speechSynthesis.cancel(); // cut off a yawn in progress
   // Unhurried: the lids lift to half-open, then the eyes open smoothly, then one composed line.
@@ -2143,8 +2193,10 @@ function wake(after) {
   setTimeout(() => {
     document.body.classList.remove("waking");
     if (sleepState !== "awake") return;
-    const line = pick(WAKE_LINES());
-    speak(line, finish);
+    // Someone just arrived: a queued "good morning" or "welcome back" is the wake-up line instead.
+    const greet = wakeRemark();
+    dropPendingRemark();                                 // either way, they've been greeted
+    speak(greet || pick(WAKE_LINES()), finish, greet ? { nolog: true } : {});
     setTimeout(finish, 7000);                            // safety net if speech never reports back
   }, 1900);
   return true;
@@ -2153,7 +2205,7 @@ function wake(after) {
 // Any tap wakes. A tap that wakes is swallowed so it doesn't also press a button.
 let swallowClick = false, swallowTimer = null;
 document.addEventListener("pointerdown", () => {
-  poke();
+  poke(); notePresence("touch");
   if (wake()) {
     swallowClick = true; clearTimeout(swallowTimer);
     swallowTimer = setTimeout(() => swallowClick = false, 800);
@@ -2176,7 +2228,7 @@ document.addEventListener("click", (e) => {
 }, true);
 // Typing wakes too; a message sent while asleep is answered right after the wake-up line.
 document.addEventListener("keydown", (e) => {
-  poke();
+  poke(); notePresence("touch");
   if (sleepState === "awake") return;
   if (e.target === typed && e.key === "Enter" && typed.value.trim()) {
     const t = typed.value.trim();
@@ -2185,7 +2237,7 @@ document.addEventListener("keydown", (e) => {
     wake(() => { show(`<b>You:</b> ${esc(t)}`); think(t); });
   } else wake();
 }, true);
-document.addEventListener("visibilitychange", () => { if (!document.hidden) { poke(); keepScreenOn(); } });
+document.addEventListener("visibilitychange", () => { if (!document.hidden) { poke(); keepScreenOn(); notePresence("open"); } });
 
 // Testing aid: the version label also shows the sleep countdown.
 const versionEl = document.getElementById("version");
@@ -2334,9 +2386,10 @@ function trackTick() {
 function onFace(face, src) {
   const now = Date.now(), gap = now - lastFaceAt;
   lastFaceAt = now;
+  const queued = notePresence("face");                  // may queue a first-of-the-day greeting or a welcome back
   if (sleepState !== "awake") { wake(); return; }       // sitting down in front of Winslow wakes it
   poke();                                               // a face counts as activity
-  if (gap >= GREET_GAP_MS) greetFace();
+  if (gap >= GREET_GAP_MS && !queued) greetFace();      // a queued remark greets properly instead
   if (previewOpen()) return;                            // with the preview open, eyes keep looking at it
   const b = face.boundingBox;
   const nx = (b.originX + b.width / 2) / src.videoWidth - 0.5;    // -0.5 … 0.5
@@ -2450,7 +2503,7 @@ if (window.visualViewport) {
        Memory, Senses, Status. Never shows the API key.
    ========================================================= */
 const DASH_TABS = ["notes", "logs", "memory", "senses", "status"];
-const LOG_TYPES = { heard: "Heard", said: "Said", saw: "Saw", memory: "Memory", search: "Search", state: "State", error: "Error" };
+const LOG_TYPES = { heard: "Heard", said: "Said", saw: "Saw", memory: "Memory", search: "Search", remark: "Remark", mood: "Mood", state: "State", error: "Error" };
 const dashSay = $("dashSay"), dashBody = $("dashBody"), logList = $("logList"), factList = $("factList");
 const senseVideo = $("senseVideo"), senseCamMsg = $("senseCamMsg"), dashMic = $("dashMic");
 let logFilter = "all", dashTicker = null, sensesOpening = false;
@@ -2702,14 +2755,23 @@ function renderSenses() {
 /* ----- Status ----- */
 function renderStatus() {
   const u = usageToday();
-  const cost = u.priced ? `$${u.cost.toFixed(4)}` + (u.priced < u.ai ? ` (${u.ai - u.priced} replies not priced)` : "")
+  const total = u.cost + (u.remarkCost || 0);             // chats plus AI-written remarks
+  const cost = u.priced || u.remarkCost ? `$${total.toFixed(4)}` + (u.priced < u.ai ? ` (${u.ai - u.priced} replies not priced)` : "")
     : u.ai ? "Not reported by this model" : "$0.0000";
+  const f = feelNow(), sgn = v => (v >= 0 ? "+" : "−") + Math.abs(v).toFixed(2);
+  const p = proToday(), lvl = PRO_LEVELS[proLevel()];
   const state = { awake: "Awake", drowsy: "Sleepy", asleep: "Asleep" }[sleepState] + (sleepState === "awake" && mood !== "neutral" ? ` (${mood})` : "");
   setHtml($("statusKv"), kv([
     ["Version", APP_VERSION], ["AI model", brain.apiKey ? brain.model || "openrouter/auto" : "Offline brain (no API key)"],
     ["API key", brain.apiKey ? "Set (hidden)" : "Not set"],
     ["Chats today", `${u.chats}` + (u.ai ? ` (${u.ai} with the AI)` : "")], ["AI cost today (est.)", cost],
-    ["State", state], ["Sleeps after", brain.sleepAfter ? `${brain.sleepAfter} min idle` : "Never"],
+    ["State", state], ["Mood", moodSummary(f)],
+    ["Spirits / energy", `${sgn(f.spirits)} / ${sgn(f.energy)} (−1 to +1, drifts back to 0)`],
+    ["Speaks first", !lvl.max ? "Off" : `${lvl.label}: ${p.count} of ${lvl.max} today` + (p.aiSaid ? ` (${p.aiSaid} written by the AI)` : "") +
+      (p.lastAt && new Date(p.lastAt).toDateString() === new Date().toDateString()
+        ? `, last at ${new Date(p.lastAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}` : "")],
+    ["Quiet hours", brain.quietHours === false ? "Off" : `${brain.quietFrom}–${brain.quietTo}` + (inQuietHours() ? " (now: words only)" : "")],
+    ["Sleeps after", brain.sleepAfter ? `${brain.sleepAfter} min idle` : "Never"],
     ["Memory", `${brain.memory.length} fact${brain.memory.length === 1 ? "" : "s"}`],
     ["Voice", brain.voiceName || "Automatic (British first)"],
     ["Web search", !brain.apiKey ? "Needs an API key" : searchOn() ? `On: ${SEARCH_ENGINES[engineNow()]}, 1 search per reply, 3 results` : searchBroken ? "Not available with this model" : "Off"],
@@ -2784,6 +2846,342 @@ function dashCommand(text) {
   }
   return false;
 }
+
+/* =========================================================
+   11. MOOD AND SPEAKING FIRST
+   Mood: two slow values, spirits and energy (-1 to 1). Events nudge them, and the nudges drift
+   back to 0 (half-life 2 hours). Energy also follows the clock and how long the human has been
+   here. The mood goes into the system prompt as one line and shades the resting face a little.
+   Speaking first: a greeting, a welcome back, a reminder, a stretch nudge or a word about the
+   hour, within strict limits (PRO_LEVELS, remarkBlocked()). Mostly stock lines; with a key, up
+   to AI_REMARKS_PER_DAY are written by the AI.
+   ========================================================= */
+const HOUR = 3600000, MIN = 60000;
+const MOOD_HALF_LIFE_MS = 2 * HOUR;
+const lim = (v, lo = -1, hi = 1) => Math.max(lo, Math.min(hi, Number.isFinite(+v) ? +v : 0));
+
+// The nudged part of the mood, decayed toward 0 up to now.
+function feelStored() {
+  const f = brain.feel && typeof brain.feel === "object" ? brain.feel : {};
+  const now = Date.now(), t = Number.isFinite(f.t) && f.t > 0 && f.t <= now ? f.t : now;
+  const k = Math.pow(0.5, (now - t) / MOOD_HALF_LIFE_MS);
+  return { spirits: lim(f.spirits) * k, energy: lim(f.energy) * k, t: now,
+           why: typeof f.why === "string" ? f.why : "", whyAt: Number(f.whyAt) || 0, label: f.label };
+}
+// Energy from the clock: brightest mid-morning, lowest in the small hours.
+function clockEnergy(h = new Date().getHours()) {
+  return h < 5 ? -0.45 : h < 8 ? -0.1 : h < 12 ? 0.15 : h < 14 ? 0.05 : h < 17 ? 0 : h < 21 ? -0.05 : -0.25;
+}
+// A long session wears on him: nothing for the first hour, then a little more each hour.
+function sessionEnergy() {
+  const p = proState(), now = Date.now();
+  if (!p.presentSince || now - (Number(p.seenAt) || 0) > PRESENCE_GAP_MS) return 0;
+  return -Math.min(0.35, Math.max(0, (now - p.presentSince) / HOUR - 1) * 0.12);
+}
+function feelNow() {
+  const s = feelStored(), clock = clockEnergy(), sess = sessionEnergy();
+  return { spirits: lim(s.spirits), energy: lim(s.energy + clock + sess), clock, sess,
+           why: s.whyAt && Date.now() - s.whyAt < 3 * HOUR ? s.why : "" };
+}
+const spiritsWord = v => v < -0.45 ? "low" : v < -0.15 ? "a touch low" : v < 0.15 ? "even" : v < 0.45 ? "good" : "high";
+const energyWord = v => v < -0.45 ? "tired" : v < -0.15 ? "a little weary" : v < 0.15 ? "steady" : v < 0.45 ? "alert" : "lively";
+// "Spirits good (after being thanked); energy a little weary (the late hour)"
+function moodSummary(f = feelNow()) {
+  const tired = [f.clock <= -0.25 && "the late hour", f.sess <= -0.12 && "a long session"].filter(Boolean);
+  return `Spirits ${spiritsWord(f.spirits)}${f.why && Math.abs(f.spirits) >= 0.15 ? ` (after ${f.why})` : ""}; ` +
+         `energy ${energyWord(f.energy)}${tired.length && f.energy < -0.15 ? ` (${tired.join(", ")})` : ""}`;
+}
+function moodPrompt() {
+  return `YOUR MOOD (private): ${moodSummary()}. Let it colour your tone only very slightly: a shade warmer or drier, brisker or quieter. Stay composed. Never announce or dramatise it; mention it only if asked how you are.`;
+}
+// Resting face: tired = eyes a touch less open; spirits = glow a touch brighter or dimmer. Small on purpose.
+function applyMoodFace(f = feelNow()) {
+  const root = document.documentElement.style;
+  root.setProperty("--eye-h", (31 * (1 - 0.12 * Math.max(0, -f.energy))).toFixed(2) + "vmin");
+  root.setProperty("--glow", `rgba(140, 195, 255, ${(0.40 + 0.08 * f.spirits).toFixed(3)})`);
+}
+// ds/de: how much to move spirits/energy. `quiet` = small everyday nudges, not logged on their own.
+function nudgeMood(ds, de, why, quiet) {
+  const s = feelStored();
+  s.spirits = lim(s.spirits + ds); s.energy = lim(s.energy + de);
+  if (why && !quiet) { s.why = why; s.whyAt = Date.now(); }
+  brain.feel = s; save();
+  if (why && !quiet) {
+    const dir = (d, name) => !d ? "" : `${name} ${d > 0 ? "up" : "down"}${Math.abs(d) < 0.15 ? " a little" : ""}`;
+    logEvent("mood", `${[dir(ds, "Spirits"), dir(de, "energy")].filter(Boolean).join(", ")} after ${why}. Now: ${moodSummary()}`);
+  }
+  moodCheck(!quiet && !!why);
+}
+// Keeps the face in step and logs whenever the mood's wording changes (time of day, drift, nudges).
+function moodCheck(alreadyLogged) {
+  const f = feelNow(), label = spiritsWord(f.spirits) + "/" + energyWord(f.energy);
+  applyMoodFace(f);
+  if (!brain.feel || typeof brain.feel !== "object") brain.feel = feelStored();
+  if (brain.feel.label === label) return;
+  if (brain.feel.label && !alreadyLogged) logEvent("mood", "Now: " + moodSummary(f));
+  brain.feel.label = label; save();
+}
+
+/* ----- Speaking first ----- */
+const PRO_LEVELS = {
+  off:       { label: "Off",       max: 0, gapMs: Infinity },
+  rarely:    { label: "Rarely",    max: 3, gapMs: 120 * MIN },
+  sometimes: { label: "Sometimes", max: 6, gapMs: 45 * MIN }      // the hard limits: 6 a day, 45 minutes apart
+};
+const AI_REMARKS_PER_DAY = 3;
+const AI_KINDS = ["first", "return", "reminder"];                  // the personal ones; the rest use stock lines
+const PRESENCE_GAP_MS = 20 * MIN;    // no sign of the human for longer than this ends a stretch of "being here"
+const AWAY_MS = 2 * HOUR;            // back after this long = welcome back
+const STRETCH_MS = 2 * HOUR;         // here this long without a break = suggest a stretch
+const PENDING_MS = 3 * MIN;          // a greeting not delivered within this is dropped (the moment passed)
+const HERE_MS = 5 * MIN;             // reminders and nudges only when they were seen or heard this recently
+const AFTER_CHAT_MS = 2 * MIN;       // never straight after a conversation
+const REMARK_NAMES = { first: "First greeting of the day", return: "Welcome back", stretch: "Long session",
+                       late: "Late night", reminder: "Reminder" };
+const isProLevel = v => ["off", "rarely", "sometimes"].includes(v);
+const proLevel = () => isProLevel(brain.proactive) ? brain.proactive : "rarely";
+const validTime = t => typeof t === "string" && /^([01]\d|2[0-3]):[0-5]\d$/.test(t);
+let pendingRemark = null, remarkBusy = false, lastHeardAt = 0, presenceSavedAt = 0;
+
+function proState() {
+  if (!brain.pro || typeof brain.pro !== "object" || Array.isArray(brain.pro)) brain.pro = {};
+  return brain.pro;
+}
+function proToday() {
+  const p = proState();
+  if (p.day !== todayKey()) { p.day = todayKey(); p.count = 0; p.ai = 0; p.aiSaid = 0; p.reminded = {}; }
+  if (!p.reminded || typeof p.reminded !== "object") p.reminded = {};
+  return p;
+}
+function inQuietHours(d = new Date()) {
+  if (brain.quietHours === false) return false;
+  const mins = (s, def) => { s = validTime(s) ? s : def; return +s.slice(0, 2) * 60 + +s.slice(3); };
+  const from = mins(brain.quietFrom, DEFAULTS.quietFrom), to = mins(brain.quietTo, DEFAULTS.quietTo);
+  const now = d.getHours() * 60 + d.getMinutes();
+  return from === to ? false : from < to ? now >= from && now < to : now >= from || now < to;
+}
+// Hours between two times, not counting 10 pm to 7 am: a night's sleep isn't neglect.
+function dayHoursBetween(a, b) {
+  const step = 15 * MIN; let n = 0;
+  for (let t = Math.max(a, b - 48 * HOUR); t < b; t += step) { const h = new Date(t).getHours(); if (h >= 7 && h < 22) n++; }
+  return n * step / HOUR;
+}
+const queueRemark = (kind, extra) => { pendingRemark = { kind, at: Date.now(), ...extra }; };
+function dropPendingRemark(kind) { if (pendingRemark && (!kind || pendingRemark.kind === kind)) pendingRemark = null; }
+
+// A sign the human is here: a face, a touch, a key, talking, or the app being opened.
+// Returns true if it queued a greeting (first of the day, or back after 2+ hours).
+function notePresence(src) {
+  if (document.hidden) return false;
+  const p = proToday(), now = Date.now(), last = Number(p.seenAt) || 0;
+  let queued = false;
+  if (!last || now - last > PRESENCE_GAP_MS) p.presentSince = now;
+  const away = last && now - last >= AWAY_MS;
+  if (away) {
+    const hrs = dayHoursBetween(last, now);
+    if (hrs >= 3) nudgeMood(-Math.min(0.25, 0.05 * (hrs - 2)), 0, `being left alone for ${Math.round(hrs)} hours`);
+  }
+  if (p.greetDay !== todayKey()) {
+    p.greetDay = todayKey();
+    if (new Date().getHours() < 5) p.lateDay = todayKey();     // a small-hours greeting covers the hour
+    queueRemark("first"); queued = true;
+  } else if (away) { queueRemark("return", { hours: (now - last) / HOUR }); queued = true; }
+  p.seenAt = now;
+  if (queued || now - presenceSavedAt > MIN) { presenceSavedAt = now; save(); }
+  if (queued) setTimeout(proactiveTick, 2500);
+  return queued;
+}
+
+// Called by think() for everything said or typed.
+const KIND_RE = /\b(thanks?|thank you|cheers|appreciate (it|that|you)|well done|good (job|work|man|lad|bot|robot)|nice (one|work)|great (job|work)|brilliant|excellent|perfect|love you|you'?re (the best|great|brilliant|a star|amazing|wonderful))\b/i;
+// Only words aimed at Winslow count ("this stupid printer" is not his problem).
+const HARSH_RE = /\b(shut up|hate you|you suck|screw you|get lost|you'?re (?:so |really |such |a |an |such an? )?(?:stupid|useless|an idiot|idiot|dumb|rubbish|pathetic|worthless|annoying|garbage)|(?:stupid|useless|dumb|rubbish|pathetic|worthless) (?:robot|bot|machine|thing|winslow)|piece of (?:junk|crap|rubbish))\b/i;
+function heardHook(text) {
+  notePresence("talk");
+  lastHeardAt = Date.now();
+  dropPendingRemark("first"); dropPendingRemark("return");   // already talking: no need to greet
+  if (HARSH_RE.test(text)) nudgeMood(-0.2, 0, "harsh words");
+  else if (KIND_RE.test(text)) nudgeMood(0.15, 0, /thank|cheers|appreciate/i.test(text) ? "being thanked" : "kind words");   // harsh words win over a sarcastic "thanks"
+}
+
+// Never interrupt: listening, thinking, speaking, settings, camera, dashboard, typing, or just after a chat.
+function remarkBlocked() {
+  const now = Date.now();
+  return document.hidden || sleepState !== "awake" || waking || listening || convo || busy || capturing || camOpening ||
+    previewOpen() || dashIsOpen() || panel.classList.contains("open") || typingOpen() || isSpeaking() || remarkBusy ||
+    now - lastSaidAt < 30000 || now - lastHeardAt < AFTER_CHAT_MS;
+}
+function remarkAllowed() {
+  const lvl = PRO_LEVELS[proLevel()], p = proToday();
+  return lvl.max > 0 && p.count < lvl.max && Date.now() - (Number(p.lastAt) || 0) >= lvl.gapMs;
+}
+
+/* Dated memories: "Dentist appointment on 14 November 2026", "Mum's birthday is 3 March",
+   "Flight on March 3rd, 2027", "Party 2026-12-31". No year = every year (birthdays). */
+const MONTH_PAT = "(jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|june?|july?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)";
+const DAY_MONTH_RE = new RegExp(`\\b(\\d{1,2})(?:st|nd|rd|th)?\\s+(?:of\\s+)?${MONTH_PAT}\\b\\.?(?:,?\\s+(\\d{4})\\b)?`, "gi");
+const MONTH_DAY_RE = new RegExp(`\\b${MONTH_PAT}\\.?\\s+(\\d{1,2})(?:st|nd|rd|th)?\\b(?:,?\\s+(\\d{4})\\b)?`, "gi");
+const ISO_DATE_RE = /\b(\d{4})-(\d{1,2})-(\d{1,2})\b/g;
+const monthIndex = s => ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"].indexOf(s.slice(0, 3).toLowerCase());
+function factDueToday(f, d = new Date()) {
+  const hit = (dd, mm, yy) => +dd === d.getDate() && mm === d.getMonth() && (!yy || +yy === d.getFullYear());
+  for (const m of f.matchAll(DAY_MONTH_RE)) if (hit(m[1], monthIndex(m[2]), m[3])) return true;
+  for (const m of f.matchAll(MONTH_DAY_RE)) if (hit(m[2], monthIndex(m[1]), m[3])) return true;
+  for (const m of f.matchAll(ISO_DATE_RE)) if (hit(m[3], +m[2] - 1, m[1])) return true;
+  return false;
+}
+const factKey = f => f.slice(0, 120);
+function dueFact(p) { return brain.memory.find(f => typeof f === "string" && !p.reminded[factKey(f)] && factDueToday(f)) || null; }
+// "My human has a dentist appointment on 14 November" → "You have a dentist appointment on 14 November"
+function factForSpeech(f) {
+  const s = f.trim().replace(/[.!?]+$/, "")
+    .replace(/\bmy human's\b/gi, "your").replace(/\bmy human is\b/gi, "you are")
+    .replace(/\bmy human has\b/gi, "you have").replace(/\bmy human\b/gi, "you");
+  return s.charAt(0).toUpperCase() + s.slice(1);
+}
+
+// What's due now, apart from greetings (those are queued by notePresence). Most urgent first.
+function dueRemark() {
+  const p = proToday(), now = Date.now();
+  if (!p.seenAt || now - p.seenAt > HERE_MS) return null;     // nobody about to hear it
+  const fact = dueFact(p);
+  if (fact) return { kind: "reminder", fact };
+  if (new Date().getHours() < 5 && p.lateDay !== todayKey()) return { kind: "late" };
+  if (p.presentSince && now - p.presentSince >= STRETCH_MS && now - (Number(p.stretchAt) || 0) >= STRETCH_MS) return { kind: "stretch" };
+  return null;
+}
+
+// Stock lines: free, in character, chosen to suit the hour.
+function poolLine(r) {
+  const a = addr(), h = new Date().getHours(), tod = timeOfDay();
+  switch (r.kind) {
+    case "first":
+      if (tod === "late") return pick([`Still up, ${a}? Good evening, or possibly good morning.`,
+                                       `Ah, ${a}. The small hours again. I shan't ask.`]);
+      if (tod === "morning") return pick([`Good morning, ${a}. I trust you slept.`,
+        `Good morning, ${a}. Systems in order. The kettle, I cannot vouch for.`,
+        `Morning, ${a}. The day awaits, whether or not we are ready for it.`]);
+      if (tod === "afternoon") return pick([`Good afternoon, ${a}. The first I've seen of you today.`,
+        `Ah. Good afternoon, ${a}. I was beginning to wonder.`]);
+      return pick([`Good evening, ${a}. I trust the day was tolerable.`, `Good evening, ${a}. A quiet day here, I'm afraid. I coped.`]);
+    case "return":
+      return pick([`Welcome back, ${a}.`, `Ah. There you are, ${a}.`, `Welcome back, ${a}. Nothing caught fire in your absence.`,
+                   `Good to have you back, ${a}. It was rather quiet.`]);
+    case "late":
+      return pick([`It is past midnight, ${a}. I mention it purely for the record.`,
+        `The hour is getting rather small, ${a}. Bed remains an option.`,
+        `Past midnight, ${a}. I shan't nag. Much.`,
+        `A quiet observation, ${a}: tomorrow tends to go better for those who sleep through the start of it.`]);
+    case "reminder": {
+      const f = factForSpeech(r.fact);
+      return pick([`If I may, ${a}. ${f}. That would be today.`, `A gentle reminder, ${a}. ${f}. Today, as it happens.`,
+                   `Before I forget, which I rarely do: ${f}. That's today, ${a}.`]);
+    }
+    case "stretch":
+      if ((h >= 12 && h < 14) || (h >= 18 && h < 20)) return pick([`Forgive the intrusion, ${a}, but have you eaten?`,
+        `It has been a while, ${a}. Something to eat, perhaps. I would fetch it, but, well.`]);
+      if (h >= 21 || h < 5) return pick([`You have been at this some time, ${a}. Rest is not a weakness.`,
+        `A long stint, ${a}. Perhaps call it a day while it is still a good one.`]);
+      return pick([`You have been at it a good while, ${a}. A stretch would not go amiss.`,
+        `Two hours without moving, ${a}. Your spine would like a word.`,
+        `Might I suggest standing up, ${a}? Briefly. For posterity.`, `A glass of water, ${a}? Purely a suggestion.`]);
+  }
+  return "";
+}
+function remarkSituation(r) {
+  const tod = timeOfDay();
+  if (r.kind === "first") return `it is the first time you have seen your human today, and it is ${tod === "late" ? "the small hours" : "the " + tod}; greet them in a way that suits the time of day`;
+  if (r.kind === "return") return `your human has just come back after about ${Math.max(2, Math.round(r.hours || 2))} hours away; welcome them back briefly`;
+  return `this memory of yours falls due today: "${r.fact}"; remind your human of it gently`;
+}
+// One short line written by the AI, using memory, mood and recent chat. No web search. Null if it fails.
+async function aiRemark(r) {
+  const ctrl = new AbortController(), timer = setTimeout(() => ctrl.abort(), 10000);
+  try {
+    const res = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+      method: "POST", signal: ctrl.signal,
+      headers: { "Authorization": "Bearer " + brain.apiKey, "Content-Type": "application/json", "X-Title": "Robot Brain" },
+      body: JSON.stringify({
+        model: brain.model || "openrouter/auto", max_tokens: 200, temperature: 0.9, usage: { include: true },
+        messages: [
+          { role: "system", content: systemPrompt(true) + "\n\nEYES: no photo; you cannot see anything right now, so do not describe your human or the room." },
+          ...brain.history.slice(-6),
+          { role: "user", content: `[Not your human speaking: a note from your own systems. Nobody has said anything. You are choosing to speak first, because ${remarkSituation(r)}. Say ONE short line in character, one or two sentences, personal where your memories allow, never inventing facts, and at most one question. Reply with the usual JSON; "remember" empty, "action" and "display" null.]` }
+        ]
+      })
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data?.error?.message || ("HTTP " + res.status));
+    const cost = Number(data.usage?.cost);
+    if (Number.isFinite(cost)) { const u = usageToday(); u.remarkCost = (u.remarkCost || 0) + cost; }
+    const msg = data.choices?.[0]?.message || {};
+    const raw = Array.isArray(msg.content) ? msg.content.map(x => x?.text || "").join("") : String(msg.content || "");
+    const say = cleanSay(parseReply(raw).say || "").trim();
+    return say && say.length <= 280 && !/[{}]/.test(say) ? say : null;
+  } finally { clearTimeout(timer); }
+}
+
+// Bookkeeping for a remark that is going out: limits, history (so a reply makes sense), log.
+function recordRemark(r, text, byAi, how) {
+  const p = proToday(), now = Date.now();
+  p.count++; p.lastAt = now;
+  if (byAi) p.aiSaid = (p.aiSaid || 0) + 1;
+  if (r.kind === "late") p.lateDay = todayKey();
+  if (r.kind === "stretch") p.stretchAt = now;
+  if (r.kind === "reminder") p.reminded[factKey(r.fact)] = 1;
+  brain.history.push({ role: "assistant", content: JSON.stringify({ say: text, emotion: "neutral" }) });
+  brain.history = brain.history.slice(-12);
+  save();
+  logEvent("remark", `${REMARK_NAMES[r.kind]}${byAi ? " (AI)" : ""}: ${text}${how ? ` [${how}]` : ""}`);
+}
+// Words at the mouth with no voice, timed like speech (quiet hours, or no tap yet this visit).
+function silentSay(text, onDone) {
+  const gen = ++speakGen, ms = Math.min(20000, 1500 + text.length * 1000 / 12);
+  speakingUntil = Date.now() + ms; lastSaidAt = Date.now();
+  sayStart(text, 1);
+  setTimeout(() => { if (gen !== speakGen) return; speakingUntil = 0; sayEnd(4000); onDone && onDone(); }, ms);
+}
+async function makeRemark(r) {
+  const p = proToday();
+  let text = poolLine(r), byAi = false;
+  if (brain.apiKey && AI_KINDS.includes(r.kind) && (p.ai || 0) < AI_REMARKS_PER_DAY) {
+    remarkBusy = true; p.ai = (p.ai || 0) + 1; save();               // counts attempts, so cost stays capped
+    try { const t = await aiRemark(r); if (t) { text = t; byAi = true; } }
+    catch (err) { logEvent("error", "Remark (AI): " + (err.name === "AbortError" ? "took too long" : err.message) + "; used a stock line"); }
+    finally { remarkBusy = false; }
+    if (remarkBlocked() || !remarkAllowed()) return;                 // the moment passed while it was being written
+  }
+  if (!text) return;
+  // iPhone only lets speech start after a tap this visit; quiet hours are words only.
+  const quiet = inQuietHours(), voice = speechUnlocked && !quiet;
+  recordRemark(r, text, byAi, voice ? "" : quiet ? "words only: quiet hours" : "words only: no tap yet this visit");
+  poke(); hideDock();
+  setMood(r.kind === "first" || r.kind === "return" ? "happy" : "neutral");
+  const back = () => setTimeout(() => { if (mood === "happy") setMood("neutral"); }, 1200);
+  if (voice) speak(text, back, { nolog: true }); else silentSay(text, back);
+}
+// Waking for someone who just arrived: a queued greeting becomes the wake-up line (stock, so it's instant).
+function wakeRemark() {
+  const r = pendingRemark;
+  if (!r || (r.kind !== "first" && r.kind !== "return")) return null;
+  pendingRemark = null;
+  if (!remarkAllowed()) return null;
+  const text = poolLine(r);
+  recordRemark(r, text, false, "as the wake-up line");
+  return text;
+}
+function proactiveTick() {
+  moodCheck();
+  if (pendingRemark && Date.now() - pendingRemark.at > PENDING_MS) pendingRemark = null;
+  if (remarkBlocked() || !remarkAllowed()) return;
+  const r = pendingRemark || dueRemark();
+  if (!r) return;
+  pendingRemark = null;
+  makeRemark(r);
+}
+setInterval(proactiveTick, 30000);
+moodCheck();
+setTimeout(() => notePresence("open"), 1500);              // opening the app counts as being here
 
 document.body.classList.toggle("debug", !!brain.debug);
 
