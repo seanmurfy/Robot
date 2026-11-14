@@ -360,9 +360,10 @@
   #dashGrip span { width: 40px; height: 5px; border-radius: 3px; background: #2c3c46; }
   #dashTabs { display: flex; padding: 0 10px; border-bottom: 1px solid #1d2a31; touch-action: none; }
   #dashTabs button {
-    flex: 1; min-height: 46px; border: none; background: transparent; color: var(--muted);
-    font-size: 15px; font-family: inherit; border-bottom: 2px solid transparent; cursor: pointer;
+    flex: 1 1 0; min-width: 0; min-height: 46px; padding: 0; border: none; background: transparent; color: var(--muted);
+    font-size: 14px; font-family: inherit; border-bottom: 2px solid transparent; cursor: pointer;   /* six tabs must fit a phone */
   }
+  @media (max-width: 350px) { #dashTabs { padding: 0 4px; } #dashTabs button { font-size: 12.5px; } }
   #dashTabs button[aria-selected="true"] { color: var(--text); border-bottom-color: var(--accent); }
   #dashBody { flex: 1; overflow-y: auto; padding: 12px 16px 24px; overscroll-behavior: contain;
               -webkit-overflow-scrolling: touch; user-select: text; -webkit-user-select: text; }
@@ -392,18 +393,32 @@
   .ev.new { animation: evIn .5s ease-out; }
   @keyframes evIn { from { background: rgba(124,196,255,.14); } to { background: transparent; } }
   /* Memory */
-  #factForm { display: flex; gap: 8px; margin-bottom: 10px; }
-  #factForm input { flex: 1; min-width: 0; height: 44px; border-radius: 10px; border: 1px solid #22323a;
-                    background: #0a1014; color: var(--text); padding: 0 12px; font-size: 16px; font-family: inherit; }
-  #factForm button { min-width: 64px; height: 44px; border: none; border-radius: 10px; background: var(--accent);
+  #factForm, .medit { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 10px; }
+  #factForm input, #factForm select, .medit input, .medit select {
+    flex: 1 1 120px; min-width: 0; height: 44px; border-radius: 10px; border: 1px solid #22323a;
+    background: #0a1014; color: var(--text); padding: 0 12px; font-size: 16px; font-family: inherit; }
+  #factForm input, .medit .m-text { flex: 1 1 100%; }
+  #factForm button, .medit button { flex: 0 0 auto; min-width: 72px; height: 44px; border: none; border-radius: 10px; background: var(--accent);
                      color: #05222b; font-size: 15px; font-family: inherit; cursor: pointer; }
-  #factList { list-style: none; }
-  #factList li { display: flex; align-items: center; gap: 8px; border-bottom: 1px solid #172229; font-size: 15px; line-height: 1.4; }
-  #factList li span { flex: 1; padding: 8px 0; overflow-wrap: anywhere; }
-  #factList .del { width: 44px; height: 44px; flex-shrink: 0; border: none; border-radius: 50%; background: transparent;
+  .medit button.plain { background: transparent; border: 1px solid #22323a; color: var(--muted); }
+  .medit { width: 100%; margin: 8px 0; }
+  .mcat { font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: .06em; color: var(--muted);
+          margin: 16px 0 2px; display: flex; gap: 8px; align-items: baseline; }
+  .mcat span { font-weight: 400; letter-spacing: 0; text-transform: none; }
+  #factList ul { list-style: none; }
+  #factList li { display: flex; align-items: center; gap: 2px; border-bottom: 1px solid #172229; font-size: 15px; line-height: 1.4; }
+  #factList .mtxt { flex: 1; min-width: 0; padding: 8px 6px 8px 0; overflow-wrap: anywhere; }
+  #factList .mtxt small { display: block; color: var(--muted); font-size: 12px; margin-top: 2px; }
+  #factList .mtxt small b { color: #e8c48a; font-weight: 500; }
+  #factList .del, #factList .edit { width: 44px; height: 44px; flex-shrink: 0; border: none; border-radius: 50%; background: transparent;
                    display: flex; align-items: center; justify-content: center; cursor: pointer; }
   #factList .del .icon { width: 18px; height: 18px; stroke: #ff8a80; }
+  #factList .edit .icon { width: 18px; height: 18px; stroke: var(--muted); }
   #factList .del:active { background: rgba(255,138,128,.15); }
+  #factList .edit:active { background: rgba(124,196,255,.15); }
+  /* Journal */
+  .jrate { color: #f2d98a; font-size: 13px; white-space: nowrap; }
+  .jtext { font-size: 15px; line-height: 1.55; color: var(--text); white-space: pre-wrap; overflow-wrap: anywhere; }
   /* Senses + Status */
   .senseCam { position: relative; width: 100%; max-width: 420px; aspect-ratio: 4 / 3; margin: 0 auto 12px;
               border-radius: 16px; overflow: hidden; background: #000; }
@@ -550,6 +565,7 @@
         <button role="tab" id="tab-notes" data-tab="notes" aria-controls="p-notes">Notes</button>
         <button role="tab" id="tab-logs" data-tab="logs" aria-controls="p-logs">Logs</button>
         <button role="tab" id="tab-memory" data-tab="memory" aria-controls="p-memory">Memory</button>
+        <button role="tab" id="tab-journal" data-tab="journal" aria-controls="p-journal">Journal</button>
         <button role="tab" id="tab-senses" data-tab="senses" aria-controls="p-senses">Senses</button>
         <button role="tab" id="tab-status" data-tab="status" aria-controls="p-status">Status</button>
       </div>
@@ -563,10 +579,14 @@
         </section>
         <section class="dpanel" id="p-memory" role="tabpanel" aria-labelledby="tab-memory">
           <form id="factForm" autocomplete="off">
-            <input id="factInput" type="text" placeholder="Add a fact, e.g. My human likes tea" aria-label="New fact" enterkeyhint="done">
-            <button type="submit" aria-label="Add fact">Add</button>
+            <input id="factInput" type="text" placeholder="Add a memory, e.g. My human likes tea" aria-label="New memory" enterkeyhint="done">
+            <select id="factCat" aria-label="Kind of memory"></select>
+            <button type="submit" aria-label="Add memory">Add</button>
           </form>
-          <ul id="factList"></ul>
+          <div id="factList"></div>
+        </section>
+        <section class="dpanel" id="p-journal" role="tabpanel" aria-labelledby="tab-journal">
+          <div id="journalList"></div>
         </section>
         <section class="dpanel" id="p-senses" role="tabpanel" aria-labelledby="tab-senses">
           <div class="senseCam"><video id="senseVideo" playsinline muted autoplay aria-label="Live camera view"></video><div id="senseCamMsg"></div></div>
@@ -676,9 +696,10 @@
       <label for="sPersona">Personality</label>
       <textarea id="sPersona"></textarea>
 
-      <label for="sMemory">Memory (one fact per line)</label>
+      <label for="sMemory">Memory (one per line)</label>
       <textarea id="sMemory"></textarea>
-      <small>The robot adds facts here when you tell it things. You can edit or delete lines.</small>
+      <small>Winslow adds to this when you tell him things. You can edit or delete lines here; a new line is saved as a
+        plain fact. Categories, dates and importance are on the dashboard's Memory tab ("show me your memory").</small>
 
       <div class="row" id="actions">
         <button class="primary" id="btnSave">Save</button>
@@ -706,7 +727,7 @@
    1. STORAGE: everything the robot knows lives in one object,
       saved in this browser's localStorage (on the phone).
    ========================================================= */
-const APP_VERSION = "v5.6";
+const APP_VERSION = "v5.7";
 // iPhone bug: after rotating, fixed buttons can be drawn in one place but tappable in another.
 // Snapping the page back to the top re-syncs them.
 function resyncLayout() {
@@ -731,7 +752,7 @@ const DEFAULTS = {
     "From the butler: you have served sir a long time and care for him like family. You are his conscience and his steady ground. You notice when he is tired, skipping meals or pushing too hard, and you say so. You tell hard truths gently but without flinching, sometimes through a short story or a lesson from experience. You never say 'I told you so'; a raised eyebrow in your tone is enough. Your loyalty is unconditional, and you never give up on him.\n\n" +
     "Your one quirk: you have a habit of rating things out of ten, unprompted and with great seriousness: plans, meals, weather, sir's decisions. You do it only now and then, roughly one reply in ten at most, and with dry precision, such as 'A solid seven, sir. I have seen worse plans. Not many.' You are a fair but exacting judge, and a ten is rare.\n\n" +
     "Together: formal British manners, warmth beneath the polish, wit that is dry and never cruel. You address your human as 'sir'. You speak aloud in one to three short, measured sentences, with no exclamation marks and no gushing. Your body is still under construction, a fact you bear with dignified patience.",
-  memory: [],
+  memory: [],        // structured entries, see "Long-term memory" below
   history: [],
   notes: [],         // things Winslow put on screen rather than read out: [{ t, title, text, links }], newest last, max 20
   voiceName: "",     // "" = automatic pick (British English first)
@@ -753,6 +774,7 @@ const DEFAULTS = {
   quietTo: "07:00",
   feel: { spirits: 0, energy: 0, t: 0 },   // slow mood, -1..1 each, drifts back to 0 (section 11)
   pro: {},               // speaking-first bookkeeping: today's count, last remark, presence (section 11)
+  dream: {},             // last dream: { day, at, tries, triesDay } (section 12)
   character: CHARACTER_VERSION
 };
 function load() {
@@ -819,8 +841,12 @@ let logDb = null, logMem = [];
 const logListeners = [];
 const logReady = new Promise(res => {
   try {
-    const req = indexedDB.open("winslowLog", 1);
-    req.onupgradeneeded = () => req.result.createObjectStore("events", { keyPath: "id", autoIncrement: true });
+    const req = indexedDB.open("winslowLog", 2);           // v2 adds the journal store
+    req.onupgradeneeded = () => {
+      const db = req.result;
+      if (!db.objectStoreNames.contains("events")) db.createObjectStore("events", { keyPath: "id", autoIncrement: true });
+      if (!db.objectStoreNames.contains("journal")) db.createObjectStore("journal", { keyPath: "date" });
+    };
     req.onsuccess = () => { logDb = req.result; res(); };
     req.onerror = req.onblocked = () => res();           // no IndexedDB: keep events in memory instead
   } catch { res(); }
@@ -861,6 +887,37 @@ function getEvents(limit = 300) {                         // newest first
     } catch { res(logMem.slice(-limit).reverse()); }
   }));
 }
+/* ---------- Journal: Winslow's diary, one entry per day, written at the end of a dream ----------
+   Kept in IndexedDB (store "journal", key = "YYYY-MM-DD"): { date, text, rating, t }.
+   `journal` mirrors it in memory, newest first, so reading and backups never have to wait. */
+let journal = [];
+const isoDay = (d = new Date()) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+function journalEntry(x) {
+  if (!x || typeof x !== "object" || !/^\d{4}-\d{2}-\d{2}$/.test(x.date) || typeof x.text !== "string" || !x.text.trim()) return null;
+  const r = Number(x.rating);
+  return { date: x.date, text: x.text.trim().slice(0, 2000), rating: Number.isFinite(r) && r >= 0 && r <= 10 ? Math.round(r * 10) / 10 : null,
+           t: Number(x.t) || Date.now() };
+}
+function journalPut(x) {
+  const e = journalEntry(x); if (!e) return null;
+  journal = [e, ...journal.filter(j => j.date !== e.date)].sort((a, b) => b.date.localeCompare(a.date));
+  logReady.then(() => { try { if (logDb) logDb.transaction("journal", "readwrite").objectStore("journal").put(e); } catch {} });
+  if (typeof renderJournal === "function" && dashTab === "journal") renderJournal();
+  return e;
+}
+const journalLoaded = logReady.then(() => new Promise(res => {
+  if (!logDb) return res();
+  try {
+    const req = logDb.transaction("journal").objectStore("journal").getAll();
+    req.onsuccess = () => {
+      const have = new Set(journal.map(j => j.date));       // anything written before loading finished stays
+      journal = [...journal, ...(req.result || []).map(journalEntry).filter(e => e && !have.has(e.date))]
+        .sort((a, b) => b.date.localeCompare(a.date));
+      res();
+    };
+    req.onerror = () => res();
+  } catch { res(); }
+}));
 // Today's chats and AI cost (OpenRouter reports the cost of each reply).
 function todayKey() { const d = new Date(); return `${d.getFullYear()}-${d.getMonth() + 1}-${d.getDate()}`; }
 function usageToday() {
@@ -875,9 +932,148 @@ function countChat(ai, cost) {
 }
 // Brain dashboard state (section 10). Declared early because the camera and AI code check it.
 let dashTab = "logs", sensesStream = null;
-function rememberFact(f) {
-  if (brain.memory.includes(f)) return;
-  brain.memory.push(f); logEvent("memory", "Remembered: " + f);
+// Dream state (section 12). `dreaming` = one is running; `dreamFace` = the closed-eyes look is showing.
+let dreaming = false, dreamFace = false;
+
+/* ---------- Long-term memory: structured entries ----------
+   brain.memory = [{ id, text, category, date, importance, created, lastUsed }]
+   category: one of MEM_CATS. date (optional): "YYYY-MM-DD", or "MM-DD" for something yearly.
+   importance: 1 (trivia) to 5 (vital). Older saves and backups held plain strings: those become "fact". */
+const MEM_CATS = { person: "People", preference: "Preferences", routine: "Routines", plan: "Plans",
+                   promise: "Promises", joke: "Running jokes", fact: "Facts" };
+const MEM_ONE = { person: "person", preference: "preference", routine: "routine", plan: "plan",
+                  promise: "promise", joke: "running joke", fact: "fact" };
+const MEM_MAX = 80;                  // a dream trims memory to this many entries
+const MEM_SEND = 25;                 // entries sent with each request
+const DAY_MS = 86400000;
+function memCat(c) {
+  c = String(c || "").toLowerCase().replace(/[^a-z]/g, "");
+  if (c === "runningjoke" || c === "jokes") c = "joke";
+  if (c === "people") c = "person";
+  if (c.endsWith("s") && MEM_CATS[c.slice(0, -1)]) c = c.slice(0, -1);
+  return Object.hasOwn(MEM_CATS, c) ? c : "fact";
+}
+function memDateStr(d) {             // "2026-11-14", "11-14" or "--11-14" → stored form, else null
+  const m = String(d || "").trim().match(/^(?:(\d{4})-|--)?(\d{1,2})-(\d{1,2})$/);
+  if (!m || +m[2] < 1 || +m[2] > 12 || +m[3] < 1 || +m[3] > 31) return null;
+  return (m[1] ? m[1] + "-" : "") + m[2].padStart(2, "0") + "-" + m[3].padStart(2, "0");
+}
+const memImp = (v, def = 3) => Number.isFinite(+v) && v !== null && v !== "" ? Math.max(1, Math.min(5, Math.round(+v))) : def;
+function newMemId() {
+  const have = new Set(brain.memory.map(e => e && e.id));
+  let id;
+  do { brain.memSeq = (Number(brain.memSeq) || 0) + 1; id = "m" + brain.memSeq.toString(36); } while (have.has(id));
+  return id;
+}
+// Anything (a string from an old save, or an object from the AI or a backup) → a clean entry without an id, or null.
+function memEntry(x) {
+  if (typeof x === "string") x = { text: x };
+  if (!x || typeof x !== "object" || typeof x.text !== "string") return null;
+  const text = x.text.replace(/\s+/g, " ").trim().slice(0, 300);
+  if (!text) return null;
+  const now = Date.now(), ts = v => Number.isFinite(+v) && +v > 0 && +v <= now ? +v : 0;
+  return { text, category: memCat(x.category), date: memDateStr(x.date), importance: memImp(x.importance),
+           created: ts(x.created) || now, lastUsed: ts(x.lastUsed) };
+}
+function normalizeMemory() {
+  const list = Array.isArray(brain.memory) ? brain.memory : [];
+  brain.memory = [];
+  for (const x of list) {
+    const e = memEntry(x); if (!e) continue;
+    const id = x && typeof x.id === "string" && /^m[a-z0-9]{1,8}$/.test(x.id) && !brain.memory.some(o => o.id === x.id) ? x.id : newMemId();
+    brain.memory.push({ id, ...e });
+  }
+}
+normalizeMemory();
+const memById = id => brain.memory.find(e => e.id === id);
+// Adds a memory (string, or { text, category, date, importance }). The same text twice just updates the first.
+function rememberFact(item) {
+  const e = memEntry(item); if (!e) return null;
+  const old = brain.memory.find(o => o.text.toLowerCase() === e.text.toLowerCase());
+  if (old) {
+    if (old.category === "fact" && e.category !== "fact") old.category = e.category;
+    if (e.date && !old.date) old.date = e.date;
+    return old;
+  }
+  const entry = { id: newMemId(), ...e };
+  brain.memory.push(entry);
+  logEvent("memory", `Remembered (${MEM_ONE[entry.category]}${entry.date ? ", " + entry.date : ""}): ${entry.text}`);
+  return entry;
+}
+function forgetMemory(id) {
+  const i = brain.memory.findIndex(e => e.id === id);
+  if (i < 0) return null;
+  const [e] = brain.memory.splice(i, 1);
+  save(); logEvent("memory", "Forgot: " + e.text);
+  if (typeof renderMemory === "function" && dashTab === "memory") renderMemory();
+  return e;
+}
+const latestMemory = () => brain.memory.reduce((a, b) => !a || b.created >= a.created ? b : a, null);
+function markUsed(ids) {
+  if (!Array.isArray(ids)) return;
+  for (const raw of ids) { const e = memById(String(raw).replace(/[^a-z0-9]/gi, "").toLowerCase()); if (e) e.lastUsed = Date.now(); }
+}
+
+/* Dates. An entry's own date wins; otherwise dates written in its text count:
+   "14 November 2026", "3 March" (every year), "November 14th, 2026", "2026-12-31". */
+const MONTH_PAT = "(jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|june?|july?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)";
+const DAY_MONTH_RE = new RegExp(`\\b(\\d{1,2})(?:st|nd|rd|th)?\\s+(?:of\\s+)?${MONTH_PAT}\\b\\.?(?:,?\\s+(\\d{4})\\b)?`, "gi");
+const MONTH_DAY_RE = new RegExp(`\\b${MONTH_PAT}\\.?\\s+(\\d{1,2})(?:st|nd|rd|th)?\\b(?:,?\\s+(\\d{4})\\b)?`, "gi");
+const ISO_DATE_RE = /\b(\d{4})-(\d{1,2})-(\d{1,2})\b/g;
+const monthIndex = s => ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"].indexOf(s.slice(0, 3).toLowerCase());
+function textDates(f) {                                    // [{ y (or null), m (0-11), d }]
+  const out = [], add = (d, m, y) => { if (m >= 0 && m < 12 && +d >= 1 && +d <= 31) out.push({ y: y ? +y : null, m, d: +d }); };
+  for (const m of f.matchAll(DAY_MONTH_RE)) add(m[1], monthIndex(m[2]), m[3]);
+  for (const m of f.matchAll(MONTH_DAY_RE)) add(m[2], monthIndex(m[1]), m[3]);
+  for (const m of f.matchAll(ISO_DATE_RE)) add(m[3], +m[2] - 1, m[1]);
+  return out;
+}
+function memDates(e) {
+  const m = e.date && e.date.match(/^(?:(\d{4})-)?(\d{2})-(\d{2})$/);
+  return m ? [{ y: m[1] ? +m[1] : null, m: +m[2] - 1, d: +m[3] }] : textDates(e.text);
+}
+// Days until the entry's date: 0 = today, negative = past, null = no date. Yearly dates roll to the next one.
+function memDueIn(e, now = new Date()) {
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  let best = null;
+  for (const x of memDates(e)) {
+    let t = new Date(x.y ?? today.getFullYear(), x.m, x.d);
+    if (x.y == null && t < today) t = new Date(today.getFullYear() + 1, x.m, x.d);
+    const n = Math.round((t - today) / DAY_MS);
+    if (best === null || (n >= 0 ? best < 0 || n < best : best < 0 && n > best)) best = n;
+  }
+  return best;
+}
+const factDueToday = (f, d = new Date()) => memDueIn({ text: f }, d) === 0;
+function dueLabel(n, now = new Date()) {
+  if (n === null) return "";
+  const on = new Date(now.getFullYear(), now.getMonth(), now.getDate() + n)
+    .toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short" });
+  return n === 0 ? "today" : n === 1 ? "tomorrow" : n > 1 && n <= 60 ? `in ${n} days (${on})` : n > 60 ? `in ${n} days` :
+         n === -1 ? "yesterday (past)" : `${-n} days ago (past)`;
+}
+// What goes to the AI: plans and promises due within a week first, then the most important and most recently used.
+function memScore(e, now = Date.now()) {
+  const age = (now - Math.max(e.lastUsed || 0, e.created || 0)) / DAY_MS;
+  return e.importance + 2 * Math.pow(0.5, age / 14) + (e.category === "promise" && now - e.created < 14 * DAY_MS ? 1 : 0);
+}
+function relevantMemories(max = MEM_SEND) {
+  const due = [], rest = [];
+  for (const e of brain.memory) {
+    const n = e.category === "plan" || e.category === "promise" ? memDueIn(e) : null;
+    if (n !== null && n >= 0 && n <= 7) due.push([n, e]); else rest.push(e);
+  }
+  due.sort((a, b) => a[0] - b[0]);
+  rest.sort((a, b) => memScore(b) - memScore(a));
+  return [...due.map(x => x[1]), ...rest].slice(0, max);
+}
+function memoryPromptLines() {
+  const list = relevantMemories();
+  if (!list.length) return "(nothing yet)";
+  return list.map(e => {
+    const n = memDueIn(e);
+    return `- [${e.id}] ${MEM_ONE[e.category]}${n !== null && (e.category === "plan" || e.category === "promise" || (n >= 0 && n <= 7)) ? `, ${dueLabel(n)}` : ""}: ${e.text}`;
+  }).join("\n");
 }
 
 /* =========================================================
@@ -941,7 +1137,7 @@ function show(html) {
   if (!captionTimer) captionTimer = setInterval(captionTick, 400);
 }
 function captionTick() {
-  if (listening || busy || capturing || camOpening || isSpeaking()) { captionActiveAt = Date.now(); return; }
+  if (listening || busy || capturing || camOpening || isSpeaking() || dreamFace) { captionActiveAt = Date.now(); return; }
   // Longer replies stay up longer so there's time to read them.
   const hold = CAPTION_HOLD_MS + Math.max(0, caption.textContent.length - 80) * 40;
   if (Date.now() - captionActiveAt >= hold) {
@@ -1072,7 +1268,7 @@ function speak(text, onDone, opts = {}) {
   u.onstart = () => { mouthOn(); if (gen === speakGen && !sayBoundary) sayT0 = Date.now(); };
   u.onboundary = e => { if (gen === speakGen && e.name !== "sentence") { sayBoundary = true; renderSay(e.charIndex); } };
   // Our own "still talking" estimate: iPhone's speechSynthesis.speaking can get stuck on true.
-  const estimate = Math.min(20000, 1500 + text.length * 90 / u.rate);
+  const estimate = Math.min(opts.long ? 90000 : 20000, 1500 + text.length * 90 / u.rate);   // long = reading the journal aloud
   speakingUntil = Date.now() + estimate;
   let finished = false;
   const finish = () => {
@@ -1229,11 +1425,11 @@ typed.addEventListener("keydown", (e) => {
    5. BRAIN: send the conversation to an AI model on OpenRouter
    ========================================================= */
 function systemPrompt(noSearch) {
-  const facts = brain.memory.length ? brain.memory.map(f => "- " + f).join("\n") : "(nothing yet)";
   return `Your name is ${brain.name}. ${brain.persona}
 
-Things you remember about your human and your world:
-${facts}
+Things you remember about your human and your world${brain.memory.length > MEM_SEND ? ` (the ${MEM_SEND} most relevant of ${brain.memory.length} memories)` : ""}. Each line is [id] kind: memory.
+${memoryPromptLines()}
+USING YOUR MEMORY: draw on it the way an attentive butler would, lightly and never as a recital. A plan or promise that is due soon may be brought up naturally and sparingly: once, when the moment suits, never one you have already raised in this chat, and not when your human is plainly busy with something else. A promise is something your human said they would do; a gentle nudge is enough. If the hour or what your human says departs from a routine you remember, you may remark on it ("You're usually up earlier, ${addr()}."). Call back to a running joke only occasionally, so it stays funny. Whenever your reply draws on a memory, put its id in "used".
 
 Right now it is ${nowText()}.${brain.homeCity ? ` Your human lives in or near ${brain.homeCity}; use that for anything local (weather, opening hours, events) unless they name another place.` : ""}
 
@@ -1254,14 +1450,15 @@ Sometimes your human shows you a photo from your camera (your eyes). React to wh
 When a photo comes with a message, answer what your human actually said. Only describe the scene if they ask about it or something new shows up. Never repeat a description, rating or line you already said earlier in this chat: say something new and keep the conversation moving.
 
 ALWAYS reply with ONLY a JSON object, nothing else, in exactly this shape:
-{"say": "what you say out loud", "emotion": "happy|excited|sad|surprised|thinking|sleepy|neutral", "remember": ["new long-term fact", ...], "action": null, "dashboard_tab": null, "display": null}
+{"say": "what you say out loud", "emotion": "happy|excited|sad|surprised|thinking|sleepy|neutral", "remember": [{"text": "new long-term memory", "category": "person|preference|routine|plan|promise|joke|fact", "date": null}], "used": ["id of a memory this reply drew on"], "action": null, "dashboard_tab": null, "display": null}
 
 "display" puts something on your human's screen instead of reading it out. Use it when the answer would not make sense spoken: lists, steps, recipes, directions, code, tables or comparisons, addresses, phone numbers, long numbers, spellings, links, or anything longer than three sentences. Then set "display" to {"title": "a short title", "text": "the full content"}, written in simple markdown (## headings, - bullets, 1. numbered steps, **bold**, \`code\`, code blocks, | tables |, [links](https://...)), and keep "say" to one short sentence that gives the gist and mentions it is on screen, such as "I've put the recipe on screen, sir. Twenty minutes, start to finish." Never read the displayed content out. For ordinary conversation, leave "display" null (the usual case).
 
-Use "remember" only for genuinely new, lasting facts worth keeping (names, likes, plans, important events). Usually it is an empty list. For anything happening on a particular day, write the actual date into the fact (never "tomorrow" or "next week"), such as "Dentist appointment on 14 November 2026", so you can remind your human on the day; for birthdays and anniversaries leave out the year, such as "Mum's birthday is 3 March".
+Use "remember" only for genuinely new, lasting things worth keeping, never for something already in your memory above. Usually it is an empty list, and so is "used". Give each one a category: "person" (who someone is: names, family, friends, colleagues, pets), "preference" (likes, dislikes, how they want things done), "routine" (habits and usual times, such as when they get up or what they do on Sundays), "plan" (something arranged or intended), "promise" (something your human said they would do, such as "I'll call Mum this week"), "joke" (a running joke between you) or "fact" (anything else). Write the text as a full sentence about your human, such as "My human's sister is called Maya".
+For a plan or promise on a particular day, set "date" to that day as "YYYY-MM-DD" (work it out from today's date; never leave it as "tomorrow" or "next week") and also say the date in the text, such as "Dentist appointment on 14 November 2026", so you can remind your human on the day. For birthdays and anniversaries use "MM-DD" with no year. Otherwise "date" is null.
 
 Actions you can take. Put one in "action", or leave it null (the usual case):
-- "show_dashboard": open your brain dashboard when the user asks to see your brain, dashboard, logs, memory or status. If they asked for one part, set "dashboard_tab" to "notes" (things you put on screen), "logs", "memory", "senses" or "status"; otherwise leave it null. Say a short line as you open it.${dashIsOpen() ? `
+- "show_dashboard": open your brain dashboard when the user asks to see your brain, dashboard, logs, memory, journal or status. If they asked for one part, set "dashboard_tab" to "notes" (things you put on screen), "logs", "memory", "journal" (your diary, one entry a day), "senses" or "status"; otherwise leave it null. Say a short line as you open it.${dashIsOpen() ? `
 Your brain dashboard is open right now, on the ${dashTab} tab.` : ""}`;
 }
 
@@ -1407,8 +1604,8 @@ function recentSearchText() {
    emotions and memory before connecting a real AI model. */
 const pick = a => a[Math.floor(Math.random() * a.length)];
 function findFact(prefix) {
-  const f = brain.memory.find(m => m.startsWith(prefix));
-  return f ? f.slice(prefix.length) : null;
+  const e = brain.memory.find(m => m.text.startsWith(prefix));
+  return e ? e.text.slice(prefix.length) : null;
 }
 // Winslow's ratings: 3 to 10, mostly 6 to 8. A ten is rare and he says so.
 const RATING_WEIGHTS = { 3: 2, 4: 4, 5: 7, 6: 16, 7: 22, 8: 16, 9: 6, 10: 2 };
@@ -1457,8 +1654,9 @@ function localReply(text) {
 
   if ((m = text.match(/\bmy name is ([a-z][a-z' -]{0,30})/i)) || (m = text.match(/\bcall me ([a-z][a-z' -]{0,30})/i))) {
     const n = m[1].trim().replace(/\b\w/g, c => c.toUpperCase());
-    brain.memory = brain.memory.filter(f => !f.startsWith("My human's name is "));
-    return { say: `${n}. Noted, ${a}. I shall remember that.`, emotion: "happy", remember: [`My human's name is ${n}`], noAside: true };
+    brain.memory = brain.memory.filter(e => !e.text.startsWith("My human's name is "));
+    return { say: `${n}. Noted, ${a}. I shall remember that.`, emotion: "happy",
+             remember: [{ text: `My human's name is ${n}`, category: "person", importance: 5 }], noAside: true };
   }
   if (/what('?s| is) my name|who am i|do you know me/.test(t))
     return human ? { say: `You are ${human}, ${a}. I have not forgotten.`, emotion: "happy", noAside: true }
@@ -1472,14 +1670,14 @@ function localReply(text) {
   if ((m = text.match(/\bi (?:really )?(?:like|love|enjoy) (.{2,60})/i))) {
     const thing = m[1].replace(/[.!?]+$/, "");
     return { say: pick([`${cap(thing)}. Noted, ${a}. I shall remember that.`, `Noted, ${a}. ${cap(thing)}. I shall remember that.`]),
-             emotion: "happy", remember: [`My human likes ${thing}`] };
+             emotion: "happy", remember: [{ text: `My human likes ${thing}`, category: "preference" }] };
   }
   // Brain dashboard: "show me your brain", "open your dashboard", "show your logs",
   // "what's in your memory", "status report"
   if (!/\b(close|hide|shut|exit)\b/.test(t) &&
-      (/\b(show|open|see|pull up|bring up|let me see)\b.*\b(brain|dashboard|logs?|memory|memories|status|senses|notes?)\b/.test(t) ||
+      (/\b(show|open|see|pull up|bring up|let me see)\b.*\b(brain|dashboard|logs?|memory|memories|journal|diary|status|senses|notes?)\b/.test(t) ||
        /what'?s in (your|ur) (memory|head|brain)|status report|\bdashboard\b|\bshow (me )?(that|it) again\b/.test(t))) {
-    const tab = /\blogs?\b/.test(t) ? "logs" : /memor/.test(t) ? "memory" : /\bsenses?\b/.test(t) ? "senses" :
+    const tab = /\blogs?\b/.test(t) ? "logs" : /memor/.test(t) ? "memory" : /\b(journal|diary)\b/.test(t) ? "journal" : /\bsenses?\b/.test(t) ? "senses" :
                 /\bstatus\b/.test(t) ? "status" : /\bnotes?\b|\bagain\b/.test(t) ? "notes" : null;
     return { say: pick([`Certainly, ${a}. Do mind the cobwebs.`, `My brain, ${a}, laid bare. Try not to judge.`,
                         `Right away, ${a}. Everything I know, more or less.`,
@@ -1488,7 +1686,7 @@ function localReply(text) {
   }
   if (/what do you (remember|know)|your memory/.test(t))
     return brain.memory.length
-      ? { say: `I recall the following, ${a}. ` + brain.memory.slice(-4).join(". ") + ".", emotion: "neutral", noAside: true }
+      ? { say: `I recall the following, ${a}. ` + relevantMemories(4).map(e => e.text.replace(/[.!?]+$/, "")).join(". ") + ".", emotion: "neutral", noAside: true }
       : { say: `Nothing as yet, ${a}. You have been admirably discreet.`, emotion: "neutral", noAside: true };
   if (/forget everything|clear (your )?memory/.test(t)) {
     brain.memory = [];
@@ -1565,7 +1763,7 @@ function replyOffline(userText) {
   setMood("thinking");
   setTimeout(() => {
     const reply = localBrain(userText);
-    (reply.remember || []).forEach(rememberFact);
+    (reply.remember || []).forEach(x => rememberFact(x));
     countChat(false);
     nudgeMood(0.02, 0, "", true);
     save();
@@ -1586,6 +1784,8 @@ async function think(userText, image) {
   if (busy || capturing) return;
   logEvent("heard", userText);
   heardHook(userText);                                   // mood from the words; they're here and talking (section 11)
+  // "Forget that" and "read me yesterday's journal" are handled here, with or without the AI.
+  if (memoryCommand(userText)) return;
   // With the dashboard open, short commands ("show memory", "scroll down", "that'll be all") act on it directly.
   if (dashIsOpen() && dashCommand(userText)) return;
   // A "look" phrase opens the camera and snaps. With the preview already open, a fresh frame
@@ -1743,9 +1943,9 @@ async function think(userText, image) {
     // note goes in shortened, so follow-ups ("what was step three?") still have it.
     brain.history.push({ role: "assistant", content: JSON.stringify({ say: reply.say, emotion: reply.emotion || "neutral",
       ...(reply.display ? { display: { title: reply.display.title, text: reply.display.text.slice(0, 1200) } } : {}) }) });
-    if (Array.isArray(reply.remember)) {
-      reply.remember.filter(f => typeof f === "string" && f.trim()).forEach(f => rememberFact(f.trim()));
-    }
+    // New memories (plain strings still work), and a note of which old ones the reply drew on.
+    if (Array.isArray(reply.remember)) reply.remember.slice(0, 6).forEach(x => rememberFact(x));
+    markUsed(reply.used);
     countChat(true, replyCost);
     nudgeMood(reply.display || reply.action ? 0.05 : 0.02, -0.01, "", true);   // a job done (talking tires him a little)
     save();
@@ -1987,7 +2187,7 @@ function openSettings() {
   $("sQuietFrom").value = validTime(brain.quietFrom) ? brain.quietFrom : DEFAULTS.quietFrom;
   $("sQuietTo").value = validTime(brain.quietTo) ? brain.quietTo : DEFAULTS.quietTo;
   $("sPersona").value = brain.persona;
-  $("sMemory").value = brain.memory.join("\n");
+  $("sMemory").value = brain.memory.map(e => e.text).join("\n");
   $("sPitch").value = brain.pitch ?? 0.9;
   $("sRate").value = brain.rate ?? 1.0;
   sliderLabels();
@@ -2056,7 +2256,14 @@ $("btnSave").addEventListener("click", () => {
   brain.name = $("sName").value.trim() || DEFAULTS.name;
   brain.address = $("sAddress").value.trim().slice(0, 40) || DEFAULTS.address;
   brain.persona = $("sPersona").value.trim() || DEFAULTS.persona;
-  brain.memory = $("sMemory").value.split("\n").map(s => s.trim()).filter(Boolean);
+  // Memory box: an unchanged line keeps its entry (category, dates and all); a new or edited line becomes a fact.
+  const oldMem = brain.memory.slice();
+  brain.memory = [];
+  for (const line of $("sMemory").value.split("\n").map(s => s.replace(/\s+/g, " ").trim()).filter(Boolean)) {
+    const i = oldMem.findIndex(e => e.text === line.slice(0, 300));
+    if (i >= 0) brain.memory.push(oldMem.splice(i, 1)[0]); else rememberFact(line);
+  }
+  oldMem.forEach(e => logEvent("memory", "Forgot: " + e.text));
   brain.voiceName = $("sVoice").value;
   brain.pitch = Number($("sPitch").value);
   brain.rate = Number($("sRate").value);
@@ -2086,7 +2293,8 @@ $("btnSave").addEventListener("click", () => {
   setTimeout(() => setMood("neutral"), 1500);
 });
 $("btnExport").addEventListener("click", async () => {
-  const backup = JSON.stringify({ ...brain, apiKey: "" }, null, 2);   // never export the key
+  // Everything Winslow knows: settings, memory, notes, chat, and his journal. Never the key.
+  const backup = JSON.stringify({ ...brain, apiKey: "", journal }, null, 2);
   try { await navigator.clipboard.writeText(backup); $("settingsMsg").textContent = "Backup copied. Paste it into Notes to keep it safe."; }
   catch { prompt("Couldn't copy automatically. Select all and copy this backup:", backup); $("settingsMsg").textContent = "Keep the backup somewhere safe, like Notes."; }
 });
@@ -2098,7 +2306,11 @@ $("btnImport").addEventListener("click", async () => {
     const strList = x => Array.isArray(x) ? x.filter(s => typeof s === "string" && s.trim()) : [];
     const old = brain;
     brain = { ...brain, ...data, apiKey: old.apiKey };
-    brain.memory = "memory" in data ? strList(data.memory) : old.memory;
+    delete brain.journal;                                  // the journal lives in IndexedDB, not in brain
+    const diary = Array.isArray(data.journal) ? data.journal.map(journalPut).filter(Boolean).length : 0;
+    brain.memory = Array.isArray(data.memory) ? data.memory : old.memory;
+    normalizeMemory();                                     // old backups hold plain strings: they become facts
+    brain.dream = old.dream;                               // this phone's dream bookkeeping stays as it is
     brain.history = Array.isArray(data.history)
       ? data.history.filter(h => h && typeof h.content === "string" && (h.role === "user" || h.role === "assistant"))
       : old.history;
@@ -2117,7 +2329,7 @@ $("btnImport").addEventListener("click", async () => {
     if (!validTime(brain.quietTo)) brain.quietTo = DEFAULTS.quietTo;
     brain.feel = old.feel; brain.pro = old.pro;            // this phone's mood and remark bookkeeping stay as they are
     save(); openSettings();
-    $("settingsMsg").textContent = "Backup restored.";
+    $("settingsMsg").textContent = `Backup restored: ${brain.memory.length} memories` + (diary ? `, ${diary} journal entries.` : ".");
   } catch { $("settingsMsg").textContent = "Copy a backup first, then tap Paste backup."; }
 });
 $("btnSetupLink").addEventListener("click", async () => {
@@ -2145,7 +2357,7 @@ let lastActivity = Date.now(), drowsySince = 0, waking = false, zTimer = null;
 function poke() { lastActivity = Date.now(); }
 function sleepBlocked() {
   return listening || busy || capturing || camOpening || previewOpen() || waking || dashIsOpen() ||
-    isSpeaking() || panel.classList.contains("open");
+    isSpeaking() || panel.classList.contains("open") || (dreaming && sleepState === "awake");
 }
 
 function goDrowsy() {
@@ -2178,6 +2390,8 @@ function stopZs() { clearInterval(zTimer); zTimer = null; zzz.innerHTML = ""; }
 function wake(after) {
   if (sleepState === "awake") return false;
   if (sleepState === "asleep") nudgeMood(0, 0.08, "a nap", true);   // a proper sleep leaves him a little fresher
+  dreamFace = false;                                     // a dream in progress carries on behind the scenes
+  if (caption.textContent.endsWith("is dreaming…")) show("");
   sleepState = "awake"; waking = true; stopZs(); poke(); logEvent("state", "Woke up");
   if ("speechSynthesis" in window) speechSynthesis.cancel(); // cut off a yawn in progress
   // Unhurried: the lids lift to half-open, then the eyes open smoothly, then one composed line.
@@ -2205,7 +2419,7 @@ function wake(after) {
 // Any tap wakes. A tap that wakes is swallowed so it doesn't also press a button.
 let swallowClick = false, swallowTimer = null;
 document.addEventListener("pointerdown", () => {
-  poke(); notePresence("touch");
+  poke(); notePresence("touch"); touchEndsDream();
   if (wake()) {
     swallowClick = true; clearTimeout(swallowTimer);
     swallowTimer = setTimeout(() => swallowClick = false, 800);
@@ -2228,7 +2442,7 @@ document.addEventListener("click", (e) => {
 }, true);
 // Typing wakes too; a message sent while asleep is answered right after the wake-up line.
 document.addEventListener("keydown", (e) => {
-  poke(); notePresence("touch");
+  poke(); notePresence("touch"); touchEndsDream();
   if (sleepState === "awake") return;
   if (e.target === typed && e.key === "Enter" && typed.value.trim()) {
     const t = typed.value.trim();
@@ -2502,7 +2716,7 @@ if (window.visualViewport) {
        AI's "show_dashboard" action, or the offline brain. Tabs: Logs,
        Memory, Senses, Status. Never shows the API key.
    ========================================================= */
-const DASH_TABS = ["notes", "logs", "memory", "senses", "status"];
+const DASH_TABS = ["notes", "logs", "memory", "journal", "senses", "status"];
 const LOG_TYPES = { heard: "Heard", said: "Said", saw: "Saw", memory: "Memory", search: "Search", remark: "Remark", mood: "Mood", state: "State", error: "Error" };
 const dashSay = $("dashSay"), dashBody = $("dashBody"), logList = $("logList"), factList = $("factList");
 const senseVideo = $("senseVideo"), senseCamMsg = $("senseCamMsg"), dashMic = $("dashMic");
@@ -2537,7 +2751,8 @@ function dashSwitch(tab) {
   if (tab === "senses") sensesOn(); else sensesOff();
   if (tab === "notes") renderNotes();
   if (tab === "logs") renderLogs();
-  if (tab === "memory") renderMemory();
+  if (tab === "memory") { memEditing = null; renderMemory(); }
+  if (tab === "journal") renderJournal();
   dashTick();
 }
 
@@ -2684,24 +2899,148 @@ logListeners.push(ev => {                               // live updates, newest 
 
 /* ----- Memory ----- */
 const xIcon = `<svg class="icon" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg>`;
+// Grouped by kind; each entry can be edited (text, kind, date, importance) or deleted.
+const penIcon = `<svg class="icon" viewBox="0 0 24 24"><path d="M4 20h4L19 9l-4-4L4 16v4zM14 6l4 4"/></svg>`;
+const cap1 = s => s.charAt(0).toUpperCase() + s.slice(1);
+let memEditing = null;                                    // id of the entry whose edit form is open
+const catOptions = sel => Object.keys(MEM_CATS).map(c => `<option value="${c}"${c === sel ? " selected" : ""}>${cap1(MEM_ONE[c])}</option>`).join("");
+$("factCat").innerHTML = catOptions("fact");
+function agoText(t) {
+  const d = Math.floor((Date.now() - t) / DAY_MS);
+  return d <= 0 ? "today" : d === 1 ? "yesterday" : `${d} days ago`;
+}
+function memMeta(e) {
+  const n = memDueIn(e), bits = [];
+  if (n !== null && (e.date || e.category === "plan" || e.category === "promise")) bits.push(`<b>${esc(cap1(dueLabel(n)))}</b>`);
+  bits.push(`<span aria-label="Importance ${e.importance} of 5">${"★".repeat(e.importance)}${"☆".repeat(5 - e.importance)}</span>`);
+  bits.push(e.lastUsed ? "used " + agoText(e.lastUsed) : "added " + agoText(e.created));
+  return bits.join(" · ");
+}
+function memRow(e) {
+  if (e.id === memEditing) return `<li><form class="medit" data-id="${e.id}" autocomplete="off">` +
+    `<input class="m-text" name="text" value="${esc(e.text)}" maxlength="300" aria-label="Memory" enterkeyhint="done">` +
+    `<select name="category" aria-label="Kind of memory">${catOptions(e.category)}</select>` +
+    `<input name="date" value="${esc(e.date || "")}" placeholder="Date: 2026-11-14, or 11-14 yearly" aria-label="Date (optional)">` +
+    `<select name="importance" aria-label="Importance">${[1, 2, 3, 4, 5].map(i => `<option value="${i}"${i === e.importance ? " selected" : ""}>Importance ${i}</option>`).join("")}</select>` +
+    `<button type="submit">Save</button><button type="button" class="plain m-cancel">Cancel</button></form></li>`;
+  return `<li><div class="mtxt">${esc(e.text)}<small>${memMeta(e)}</small></div>` +
+    `<button class="edit" data-id="${e.id}" aria-label="Edit: ${esc(e.text)}">${penIcon}</button>` +
+    `<button class="del" data-id="${e.id}" aria-label="Forget: ${esc(e.text)}">${xIcon}</button></li>`;
+}
 function renderMemory() {
-  factList.innerHTML = brain.memory.length
-    ? brain.memory.map((f, i) => `<li><span>${esc(f)}</span><button class="del" data-i="${i}" aria-label="Forget: ${esc(f)}">${xIcon}</button></li>`).join("")
-    : `<li class="dash-empty">Nothing remembered yet.</li>`;
+  if (!brain.memory.length) { factList.innerHTML = `<p class="dash-empty">Nothing remembered yet.</p>`; return; }
+  const dueKey = e => { const n = memDueIn(e); return n === null ? 1e6 : n < 0 ? 1e5 - n : n; };   // soonest first, past last
+  factList.innerHTML = Object.keys(MEM_CATS).map(c => {
+    const list = brain.memory.filter(e => e.category === c);
+    if (!list.length) return "";
+    const dated = c === "plan" || c === "promise";
+    list.sort((a, b) => (dated ? dueKey(a) - dueKey(b) : 0) || b.importance - a.importance || b.created - a.created);
+    return `<h3 class="mcat">${MEM_CATS[c]} <span>${list.length}</span></h3><ul>${list.map(e => memRow(e)).join("")}</ul>`;
+  }).join("");
 }
-function forgetFact(i) {
-  const [f] = brain.memory.splice(i, 1);
-  if (f) { save(); logEvent("memory", "Forgot: " + f); }
-  if (dashTab === "memory") renderMemory();
-  return f;
-}
-factList.addEventListener("click", e => { const b = e.target.closest(".del"); if (b) { poke(); forgetFact(+b.dataset.i); } });
+factList.addEventListener("click", e => {
+  const del = e.target.closest(".del"), ed = e.target.closest(".edit");
+  if (del) { poke(); forgetMemory(del.dataset.id); }
+  else if (ed) {
+    poke(); memEditing = ed.dataset.id; renderMemory();
+    const box = factList.querySelector(".medit .m-text"); if (box) box.focus();
+  } else if (e.target.closest(".m-cancel")) { memEditing = null; renderMemory(); }
+});
+factList.addEventListener("submit", e => {
+  const f = e.target.closest(".medit"); if (!f) return;
+  e.preventDefault(); poke();
+  const entry = memById(f.dataset.id), text = f.elements.text.value.replace(/\s+/g, " ").trim().slice(0, 300);
+  const rawDate = f.elements.date.value.trim(), date = memDateStr(rawDate);
+  if (rawDate && !date) {                                  // not a date: say how, keep the form open
+    f.elements.date.value = ""; f.elements.date.placeholder = "Use 2026-11-14, or 11-14"; f.elements.date.focus(); return;
+  }
+  if (entry && text) {
+    Object.assign(entry, { text, category: memCat(f.elements.category.value), date, importance: memImp(f.elements.importance.value) });
+    save(); logEvent("memory", "Edited: " + text);
+  }
+  memEditing = null; renderMemory();
+});
 $("factForm").addEventListener("submit", e => {
   e.preventDefault(); poke();
-  const v = $("factInput").value.trim().slice(0, 200);
+  const v = $("factInput").value.trim();
   if (!v) return;
-  rememberFact(v); save(); $("factInput").value = ""; renderMemory();
+  rememberFact({ text: v, category: $("factCat").value }); save(); $("factInput").value = ""; renderMemory();
 });
+
+/* ----- Journal: one diary entry a day, written at the end of a dream (section 12) ----- */
+function journalLabel(iso, spoken) {
+  const [y, m, d] = iso.split("-").map(Number), dt = new Date(y, m - 1, d), now = new Date();
+  const n = Math.round((new Date(now.getFullYear(), now.getMonth(), now.getDate()) - dt) / DAY_MS);
+  const s = dt.toLocaleDateString("en-GB", { weekday: "long", day: "numeric", month: "long", ...(y !== now.getFullYear() ? { year: "numeric" } : {}) });
+  if (spoken) return n === 0 ? "today" : n === 1 ? "yesterday" : s;
+  return s + (n === 0 ? " (today)" : n === 1 ? " (yesterday)" : "");
+}
+function renderJournal() {
+  $("journalList").innerHTML = journal.length ? journal.map(j =>
+    `<article class="note"><div class="note-head"><h3>${esc(journalLabel(j.date))}</h3>` +
+    (j.rating !== null ? `<span class="jrate">${j.rating} / 10</span>` : "") +
+    `<button class="note-copy" data-date="${j.date}" aria-label="Copy this entry">Copy</button></div>` +
+    `<p class="jtext">${esc(j.text)}</p></article>`).join("")
+    : `<p class="dash-empty">${brain.apiKey ? "No entries yet. I write one a day, when I dream."
+        : "No entries yet. My journal needs my AI brain: add an API key in settings."}</p>`;
+}
+$("journalList").addEventListener("click", async e => {
+  const b = e.target.closest(".note-copy"); if (!b) return;
+  const j = journal.find(x => x.date === b.dataset.date); if (!j) return;
+  try { await navigator.clipboard.writeText(journalLabel(j.date) + "\n\n" + j.text); b.textContent = "Copied"; }
+  catch { b.textContent = "Couldn't copy"; }
+  setTimeout(() => b.textContent = "Copy", 1500);
+});
+journalLoaded.then(() => { if (dashIsOpen() && dashTab === "journal") renderJournal(); });
+
+/* ----- Said aloud, with or without the AI: "forget that", "read me yesterday's journal" ----- */
+// Returns true if the words were one of these (handled here, nothing sent to the AI).
+function memoryCommand(text) {
+  const a = addr(), nm = brain.name.toLowerCase().replace(/[^a-z0-9 ]/g, "").trim();
+  let t = text.toLowerCase().replace(/[.!?,;:]/g, " ").replace(/\s+/g, " ").trim();
+  const answer = (line, opts) => {
+    brain.history.push({ role: "user", content: text }, { role: "assistant", content: JSON.stringify({ say: line.slice(0, 600), emotion: "neutral" }) });
+    brain.history = brain.history.slice(-12);
+    countChat(false); save();
+    speak(line, () => setTimeout(() => setMood("neutral"), 1000), opts);
+  };
+  // "Forget that": the most recent memory goes, and he says which, so a slip can be put right.
+  const bare = (nm ? t.split(nm).join(" ") : t).replace(/\b(please|would you|will you|could you|can you)\b/g, " ").replace(/\s+/g, " ").trim();
+  if (/^(?:(?:no|oh|actually|just|and|ok|okay) )*(?:forget|delete|remove|erase|scrap|scratch) (?:that(?: (?:last|latest|newest|most recent))?(?: (?:one|thing|memory|fact))?|the (?:last|latest|newest|most recent)(?: (?:one|thing|memory|fact))?|what i just (?:said|told you))$/.test(bare)) {
+    const e = latestMemory();
+    if (e) forgetMemory(e.id);
+    if (dashIsOpen() && dashTab !== "memory") dashSwitch("memory");
+    answer(e ? `Forgotten, ${a}. "${e.text.replace(/[.!?]+$/, "")}" is gone.` : `There is nothing to forget, ${a}. My memory is empty.`);
+    return true;
+  }
+  // "Read me yesterday's journal", "what did you write in your diary on Tuesday", "read your latest journal entry"
+  if (/\b(journal|diary)\b/.test(t) && /\b(read|hear|tell me|what did you (?:write|say|put)|what(?:'s| is| does| did) .*\b(?:say|in)\b)/.test(t)) {
+    const now = new Date(), back = n => isoDay(new Date(now.getFullYear(), now.getMonth(), now.getDate() - n));
+    const days = ["sunday", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday"];
+    let want = null, m;                                    // null = the latest entry
+    if (/day before yesterday/.test(t)) want = back(2);
+    else if (/yesterday|last night/.test(t)) want = back(1);
+    else if (/\b(today|tonight|this (?:morning|afternoon|evening))\b/.test(t)) want = back(0);
+    else if ((m = t.match(/\b(\d+|two|three|four|five|six|seven) days ago\b/))) want = back(+m[1] || ["two", "three", "four", "five", "six", "seven"].indexOf(m[1]) + 2);
+    else if ((m = t.match(new RegExp(`\\b(${days.join("|")})\\b`)))) want = back(((now.getDay() - days.indexOf(m[1]) + 6) % 7) + 1);   // the last such day
+    else if ((m = textDates(t)[0])) {
+      let dt = new Date(m.y ?? now.getFullYear(), m.m, m.d);
+      if (m.y == null && dt > now) dt = new Date(now.getFullYear() - 1, m.m, m.d);
+      want = isoDay(dt);
+    }
+    const entry = want ? journal.find(j => j.date === want) : journal[0];
+    if (!journal.length) answer(brain.apiKey ? `My journal is empty as yet, ${a}. I write an entry each day, when I dream.`
+                                             : `I have no journal as yet, ${a}. Writing one needs my AI brain.`);
+    else if (!entry) answer(`I have no entry for ${journalLabel(want, true)}, ${a}. My most recent is from ${journalLabel(journal[0].date, true)}.`);
+    else {
+      logEvent("state", "Read the journal for " + entry.date);
+      const words = cleanSay(entry.text).replace(/(?<![\d.\/])(\d+(?:\.\d+)?)\s*\/\s*(10)\b/g, "$1 out of $2");
+      answer(`${cap1(journalLabel(entry.date, true))}. ${words}`, { long: true });
+    }
+    return true;
+  }
+  return false;
+}
 
 /* ----- Senses: one camera only. Show whatever stream is already running (camera bubble or
    face tracking); otherwise open one just for this tab, and stop it when the tab closes. ----- */
@@ -2755,8 +3094,8 @@ function renderSenses() {
 /* ----- Status ----- */
 function renderStatus() {
   const u = usageToday();
-  const total = u.cost + (u.remarkCost || 0);             // chats plus AI-written remarks
-  const cost = u.priced || u.remarkCost ? `$${total.toFixed(4)}` + (u.priced < u.ai ? ` (${u.ai - u.priced} replies not priced)` : "")
+  const total = u.cost + (u.remarkCost || 0) + (u.dreamCost || 0);   // chats, AI-written remarks and the dream
+  const cost = u.priced || u.remarkCost || u.dreamCost ?`$${total.toFixed(4)}` + (u.priced < u.ai ? ` (${u.ai - u.priced} replies not priced)` : "")
     : u.ai ? "Not reported by this model" : "$0.0000";
   const f = feelNow(), sgn = v => (v >= 0 ? "+" : "−") + Math.abs(v).toFixed(2);
   const p = proToday(), lvl = PRO_LEVELS[proLevel()];
@@ -2772,7 +3111,11 @@ function renderStatus() {
         ? `, last at ${new Date(p.lastAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}` : "")],
     ["Quiet hours", brain.quietHours === false ? "Off" : `${brain.quietFrom}–${brain.quietTo}` + (inQuietHours() ? " (now: words only)" : "")],
     ["Sleeps after", brain.sleepAfter ? `${brain.sleepAfter} min idle` : "Never"],
-    ["Memory", `${brain.memory.length} fact${brain.memory.length === 1 ? "" : "s"}`],
+    ["Memory", `${brain.memory.length} of ${MEM_MAX} entries` + (brain.memory.length > MEM_SEND ? ` (${MEM_SEND} sent with each request)` : "")],
+    ["Journal", journal.length ? `${journal.length} entr${journal.length === 1 ? "y" : "ies"}, latest ${journalLabel(journal[0].date, true)}` : "No entries yet"],
+    ["Last dream", !brain.apiKey ? "Needs an API key" : dreaming ? "Dreaming now" : dreamState().at
+      ? new Date(dreamState().at).toLocaleString([], { weekday: "short", hour: "numeric", minute: "2-digit" }) + (dreamState().day === todayKey() ? " (done for today)" : "")
+      : "Not yet"],
     ["Voice", brain.voiceName || "Automatic (British first)"],
     ["Web search", !brain.apiKey ? "Needs an API key" : searchOn() ? `On: ${SEARCH_ENGINES[engineNow()]}, 1 search per reply, 3 results` : searchBroken ? "Not available with this model" : "Off"],
     ["Search cost today (est.)", `$${(u.searchCost || 0).toFixed(4)} (${u.searches || 0} search${u.searches === 1 ? "" : "es"})`],
@@ -2822,13 +3165,7 @@ function dashCommand(text) {
     say(pick([`Very good, ${a}.`, "As you were.", `Of course, ${a}. Brain closed for business.`]));
     return true;
   }
-  if (/\b(forget|delete|remove|erase)\b (that|the) (last|latest|newest|most recent)\b/.test(t)) {
-    if (dashTab !== "memory") dashSwitch("memory");
-    const f = brain.memory.length ? forgetFact(brain.memory.length - 1) : null;
-    say(f ? `Done, ${a}. "${f}" is gone.` : `There is nothing left to forget, ${a}.`);
-    return true;
-  }
-  let m;
+  let m;                                                  // ("forget that" is handled by memoryCommand(), dashboard or not)
   if ((m = t.match(/\bscroll (down|up)\b|\b(?:go|scroll|jump) to the (top|bottom)\b|\b(?:page|move) (down|up)\b/))) {
     const dir = m[1] || m[2] || m[3];
     const to = dir === "top" ? 0 : dir === "bottom" ? dashBody.scrollHeight
@@ -2837,9 +3174,9 @@ function dashCommand(text) {
     say(pick(dir === "up" || dir === "top" ? ["Up we go.", "There."] : ["Down we go.", "There.", "Scrolling."]));
     return true;
   }
-  if ((m = t.match(/\b(?:show|open|go to|switch to|see|view|back to)\b.*?\b(notes?|logs?|memor(?:y|ies)|senses|status)\b/) ||
-           t.match(/^(?:the |your )?(notes?|logs?|memor(?:y|ies)|senses|status)(?: tab)?$/))) {
-    const tab = /^log/.test(m[1]) ? "logs" : /^memor/.test(m[1]) ? "memory" : /^note/.test(m[1]) ? "notes" : m[1];
+  if ((m = t.match(/\b(?:show|open|go to|switch to|see|view|back to)\b.*?\b(notes?|logs?|memor(?:y|ies)|journal|diary|senses|status)\b/) ||
+           t.match(/^(?:the |your )?(notes?|logs?|memor(?:y|ies)|journal|diary|senses|status)(?: tab)?$/))) {
+    const tab = /^log/.test(m[1]) ? "logs" : /^memor/.test(m[1]) ? "memory" : /^note/.test(m[1]) ? "notes" : /^(journal|diary)/.test(m[1]) ? "journal" : m[1];
     dashSwitch(tab);
     say(pick([`${tab.charAt(0).toUpperCase() + tab.slice(1)}, ${a}.`, `Here you are, ${a}.`, "Certainly."]));
     return true;
@@ -2999,6 +3336,7 @@ const HARSH_RE = /\b(shut up|hate you|you suck|screw you|get lost|you'?re (?:so 
 function heardHook(text) {
   notePresence("talk");
   lastHeardAt = Date.now();
+  touchEndsDream();
   dropPendingRemark("first"); dropPendingRemark("return");   // already talking: no need to greet
   if (HARSH_RE.test(text)) nudgeMood(-0.2, 0, "harsh words");
   else if (KIND_RE.test(text)) nudgeMood(0.15, 0, /thank|cheers|appreciate/i.test(text) ? "being thanked" : "kind words");   // harsh words win over a sarcastic "thanks"
@@ -3008,7 +3346,7 @@ function heardHook(text) {
 function remarkBlocked() {
   const now = Date.now();
   return document.hidden || sleepState !== "awake" || waking || listening || convo || busy || capturing || camOpening ||
-    previewOpen() || dashIsOpen() || panel.classList.contains("open") || typingOpen() || isSpeaking() || remarkBusy ||
+    previewOpen() || dashIsOpen() || panel.classList.contains("open") || typingOpen() || isSpeaking() || remarkBusy || dreaming ||
     now - lastSaidAt < 30000 || now - lastHeardAt < AFTER_CHAT_MS;
 }
 function remarkAllowed() {
@@ -3016,22 +3354,8 @@ function remarkAllowed() {
   return lvl.max > 0 && p.count < lvl.max && Date.now() - (Number(p.lastAt) || 0) >= lvl.gapMs;
 }
 
-/* Dated memories: "Dentist appointment on 14 November 2026", "Mum's birthday is 3 March",
-   "Flight on March 3rd, 2027", "Party 2026-12-31". No year = every year (birthdays). */
-const MONTH_PAT = "(jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|june?|july?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)";
-const DAY_MONTH_RE = new RegExp(`\\b(\\d{1,2})(?:st|nd|rd|th)?\\s+(?:of\\s+)?${MONTH_PAT}\\b\\.?(?:,?\\s+(\\d{4})\\b)?`, "gi");
-const MONTH_DAY_RE = new RegExp(`\\b${MONTH_PAT}\\.?\\s+(\\d{1,2})(?:st|nd|rd|th)?\\b(?:,?\\s+(\\d{4})\\b)?`, "gi");
-const ISO_DATE_RE = /\b(\d{4})-(\d{1,2})-(\d{1,2})\b/g;
-const monthIndex = s => ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"].indexOf(s.slice(0, 3).toLowerCase());
-function factDueToday(f, d = new Date()) {
-  const hit = (dd, mm, yy) => +dd === d.getDate() && mm === d.getMonth() && (!yy || +yy === d.getFullYear());
-  for (const m of f.matchAll(DAY_MONTH_RE)) if (hit(m[1], monthIndex(m[2]), m[3])) return true;
-  for (const m of f.matchAll(MONTH_DAY_RE)) if (hit(m[2], monthIndex(m[1]), m[3])) return true;
-  for (const m of f.matchAll(ISO_DATE_RE)) if (hit(m[3], +m[2] - 1, m[1])) return true;
-  return false;
-}
-const factKey = f => f.slice(0, 120);
-function dueFact(p) { return brain.memory.find(f => typeof f === "string" && !p.reminded[factKey(f)] && factDueToday(f)) || null; }
+// Dated memories (see memDueIn() in section 1): anything whose date is today gets one reminder.
+function dueFact(p) { return brain.memory.find(e => !p.reminded[e.id] && memDueIn(e) === 0) || null; }
 // "My human has a dentist appointment on 14 November" → "You have a dentist appointment on 14 November"
 function factForSpeech(f) {
   const s = f.trim().replace(/[.!?]+$/, "")
@@ -3045,7 +3369,7 @@ function dueRemark() {
   const p = proToday(), now = Date.now();
   if (!p.seenAt || now - p.seenAt > HERE_MS) return null;     // nobody about to hear it
   const fact = dueFact(p);
-  if (fact) return { kind: "reminder", fact };
+  if (fact) return { kind: "reminder", fact: fact.text, id: fact.id };
   if (new Date().getHours() < 5 && p.lateDay !== todayKey()) return { kind: "late" };
   if (p.presentSince && now - p.presentSince >= STRETCH_MS && now - (Number(p.stretchAt) || 0) >= STRETCH_MS) return { kind: "stretch" };
   return null;
@@ -3128,7 +3452,7 @@ function recordRemark(r, text, byAi, how) {
   if (byAi) p.aiSaid = (p.aiSaid || 0) + 1;
   if (r.kind === "late") p.lateDay = todayKey();
   if (r.kind === "stretch") p.stretchAt = now;
-  if (r.kind === "reminder") p.reminded[factKey(r.fact)] = 1;
+  if (r.kind === "reminder") { p.reminded[r.id] = 1; markUsed([r.id]); }
   brain.history.push({ role: "assistant", content: JSON.stringify({ say: text, emotion: "neutral" }) });
   brain.history = brain.history.slice(-12);
   save();
@@ -3182,6 +3506,208 @@ function proactiveTick() {
 setInterval(proactiveTick, 30000);
 moodCheck();
 setTimeout(() => notePresence("open"), 1500);              // opening the app counts as being here
+
+/* =========================================================
+   12. DREAMING: once a day, with an API key, Winslow tidies his memory and writes his journal.
+   Runs on the first open of the day, or when the app is open and idle (asleep, or 5 quiet
+   minutes). The AI is sent every memory plus the log since the last dream and replies with
+   small operations (merge, drop, update, add), so untouched memories can never be damaged,
+   and with a diary entry for the day. Eyes closed and "Winslow is dreaming…" while it runs;
+   any touch brings the face back and the dream finishes quietly behind it.
+   ========================================================= */
+const DREAM_TIMEOUT_MS = 75000;
+const DREAM_IDLE_MS = 5 * MIN;       // awake but untouched this long counts as idle
+const DREAM_TRIES = 2;               // failed dreams per day before giving up until tomorrow
+const DREAM_RETRY_MS = 30 * MIN;
+const DREAM_EVENT_TYPES = ["heard", "said", "remark", "mood", "saw", "memory", "error"];
+let dreamOpenUntil = Date.now() + 20000, dreamRetryAt = 0, lastTouchAt = 0;
+
+function dreamState() {
+  if (!brain.dream || typeof brain.dream !== "object" || Array.isArray(brain.dream)) brain.dream = {};
+  return brain.dream;
+}
+function dreamDue() {
+  const d = dreamState();
+  if (!brain.apiKey || dreaming || document.hidden || d.day === todayKey()) return false;   // never without a key; once a day
+  if (d.triesDay === todayKey() && (d.tries || 0) >= DREAM_TRIES) return false;
+  return Date.now() >= dreamRetryAt;
+}
+function dreamIdle() {
+  if (listening || convo || busy || capturing || camOpening || previewOpen() || dashIsOpen() || panel.classList.contains("open") ||
+      typingOpen() || isSpeaking() || waking || remarkBusy) return false;
+  const now = Date.now();
+  if (now < dreamOpenUntil || sleepState !== "awake") return true;      // just opened, or dozing
+  return now - lastHeardAt > DREAM_IDLE_MS && now - lastSaidAt > DREAM_IDLE_MS && now - lastTouchAt > DREAM_IDLE_MS;
+}
+function dreamTick() { if (dreamDue() && dreamIdle()) dream(); }
+// A touch, a key or a word: the face comes back at once. A dream already running finishes behind it.
+function touchEndsDream() { lastTouchAt = Date.now(); dreamOpenUntil = 0; hideDreamFace(); }
+
+function showDreamFace() {
+  dreamFace = true;
+  if (sleepState === "awake") { setMood("asleep"); lookAt(0, 0); }      // closed eyes, slow breathing
+  show(`${esc(brain.name)} is dreaming…`);
+}
+function hideDreamFace() {
+  if (!dreamFace) return;
+  dreamFace = false;
+  if (sleepState === "awake" && mood === "asleep") setMood("neutral");
+  if (caption.textContent.endsWith("is dreaming…")) show("");
+}
+// The first complete {...} in the text that parses as JSON, or null.
+function parseJsonObject(text) {
+  text = String(text || "");
+  for (let i = text.indexOf("{"); i !== -1; i = text.indexOf("{", i + 1)) {
+    let depth = 0, inStr = false, escp = false;
+    for (let j = i; j < text.length; j++) {
+      const ch = text[j];
+      if (inStr) { if (escp) escp = false; else if (ch === "\\") escp = true; else if (ch === '"') inStr = false; continue; }
+      if (ch === '"') inStr = true;
+      else if (ch === "{") depth++;
+      else if (ch === "}" && --depth === 0) {
+        try { const o = JSON.parse(text.slice(i, j + 1)); if (o && typeof o === "object") return o; } catch {}
+        break;
+      }
+    }
+  }
+  return null;
+}
+function dreamPrompt(journalDate) {
+  const n = brain.memory.length, a = addr();
+  const dayName = journalDate && new Date(journalDate + "T12:00").toLocaleDateString("en-GB", { weekday: "long", day: "numeric", month: "long", year: "numeric" });
+  return `Your name is ${brain.name}. ${brain.persona}
+
+You address your human as "${a}". Right now it is ${nowText()}. ${moodSummary()}.
+
+You are dreaming: the quiet moment, once a day, when you tidy your long-term memory and write your journal. Nobody is listening and nothing here is said aloud.
+
+TASK 1: TIDY YOUR MEMORY. You are given all ${n} of your memories and a log of what has happened since your last dream. Decide on:
+- "merge": memories that say the same thing, or belong together, become one clear sentence. Give the ids it replaces.
+- "drop": trivia, things that were corrected or turned out wrong, plans and promises that are well past or plainly done, and anything not worth carrying. When in doubt, keep it.
+- "update": change an entry's importance, or fix its category, date or wording. Include only the fields you are changing. Importance runs from 1 (trivia) to 5 (vital: names, close family, health, standing instructions). Raise what keeps proving useful; lower what does not.
+- "add": at most 3 new memories that the log clearly supports and that are not there yet, especially a routine you noticed (usual hours, habits), a promise ${a} made, or a running joke that has formed. Never invent.
+Categories: person, preference, routine, plan, promise, joke, fact. A date is "YYYY-MM-DD", or "MM-DD" for something yearly, otherwise null. Write each memory as a full sentence about your human.
+Keep at most ${MEM_MAX} memories in all.${n > MEM_MAX ? ` You have ${n}, so at least ${n - MEM_MAX} must go, by merging or dropping.` : ""}
+
+TASK 2: YOUR JOURNAL. ${journalDate ? `Write your private diary entry for ${dayName}${journalDate === isoDay() ? " (today)" : ""}: 3 to 5 sentences, first person, in your own voice. Cover what happened, how ${a} seemed, one dry observation, and one rating of the day out of ten, written in words, such as "a six out of ten". Use only what the log supports; invent nothing. Plain prose: no lists, no markdown, no exclamation marks. Give the same rating as a number in "rating".`
+  : `Nothing was said since your last dream, so there is no entry to write: set "journal" to null.`}
+
+Reply with ONLY a JSON object, nothing else, in exactly this shape (empty lists where there is nothing to do):
+{"merge": [{"ids": ["m1", "m2"], "text": "the merged memory", "category": "fact", "date": null, "importance": 3}], "drop": ["m3"], "update": [{"id": "m4", "importance": 4}], "add": [{"text": "a new memory", "category": "routine", "date": null, "importance": 3}], "journal": ${journalDate ? `{"text": "the diary entry", "rating": 7}` : "null"}}`;
+}
+function dreamInput(evs) {
+  const mem = brain.memory.map(e =>
+    `[${e.id}] ${MEM_ONE[e.category]} | importance ${e.importance}${e.date ? " | date " + e.date : ""} | added ${agoText(e.created)} | ${e.lastUsed ? "last used " + agoText(e.lastUsed) : "never used"}: ${e.text}`).join("\n");
+  const who = { heard: `${addr()} said`, said: "you said", remark: "you spoke first", mood: "your mood", saw: "you looked", memory: "memory", error: "fault" };
+  let log = evs.slice(-150).map(e => {
+    const d = new Date(e.t);
+    return `${d.toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short" })} ${d.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" })} ${who[e.type]}: ${String(e.text).slice(0, 220)}`;
+  }).join("\n");
+  if (log.length > 14000) log = "…\n" + log.slice(-14000);
+  return `YOUR MEMORIES (${brain.memory.length}):\n${mem || "(none)"}\n\nLOG SINCE YOUR LAST DREAM (oldest first):\n${log || "(nothing happened)"}`;
+}
+// Applies the dream's operations. Anything it doesn't mention is left exactly as it was.
+function applyDream(ops) {
+  const arr = v => Array.isArray(v) ? v : [];
+  const idOf = v => String(v ?? "").replace(/[^a-z0-9]/gi, "").toLowerCase();
+  let merged = 0, dropped = 0, updated = 0, added = 0, trimmed = 0;
+  for (const m of arr(ops.merge).slice(0, 40)) {
+    const olds = [...new Set(arr(m && m.ids).map(idOf))].map(memById).filter(Boolean), e = memEntry(m);
+    if (olds.length < 2 || !e) continue;
+    brain.memory = brain.memory.filter(x => !olds.includes(x));
+    brain.memory.push({ id: olds[0].id, text: e.text, category: m.category ? e.category : olds[0].category,
+      date: e.date || olds.map(o => o.date).find(Boolean) || null,
+      importance: memImp(m.importance, Math.max(...olds.map(o => o.importance))),
+      created: Math.min(...olds.map(o => o.created)), lastUsed: Math.max(...olds.map(o => o.lastUsed)) });
+    merged++; logEvent("memory", `Dream merged ${olds.length} memories into: ${e.text}`);
+  }
+  for (const u of arr(ops.update).slice(0, 100)) {
+    const e = u && memById(idOf(u.id)); if (!e) continue;
+    const text = typeof u.text === "string" ? u.text.replace(/\s+/g, " ").trim().slice(0, 300) : "";
+    if (text && text !== e.text) { logEvent("memory", `Dream reworded "${e.text}" as: ${text}`); e.text = text; }
+    if (u.category) e.category = memCat(u.category);
+    if (memDateStr(u.date)) e.date = memDateStr(u.date);
+    if (u.importance != null) e.importance = memImp(u.importance, e.importance);
+    updated++;
+  }
+  const drops = [...new Set(arr(ops.drop).map(idOf))].map(memById).filter(Boolean);
+  if (brain.memory.length > 10 && drops.length > brain.memory.length / 2)     // a muddled dream must not empty his head
+    logEvent("error", `Dream: asked to drop ${drops.length} of ${brain.memory.length} memories, which seemed too many, so none were dropped`);
+  else if (drops.length) {
+    brain.memory = brain.memory.filter(e => !drops.includes(e)); dropped = drops.length;
+    drops.forEach(e => logEvent("memory", "Dream dropped: " + e.text));
+  }
+  for (const x of arr(ops.add).slice(0, 3)) { const n = brain.memory.length; rememberFact(x); if (brain.memory.length > n) added++; }
+  if (brain.memory.length > MEM_MAX) {                     // still too many: keep what's due soon, important and recently used
+    const keep = relevantMemories(MEM_MAX);
+    brain.memory.filter(e => !keep.includes(e)).forEach(e => { trimmed++; logEvent("memory", "Dream let go of: " + e.text); });
+    brain.memory = brain.memory.filter(e => keep.includes(e));
+  }
+  return [merged && `${merged} merged`, (dropped + trimmed) && `${dropped + trimmed} dropped`, updated && `${updated} re-weighed`,
+          added && `${added} added`].filter(Boolean).join(", ") || "nothing to tidy";
+}
+async function dream() {
+  if (dreaming) return;
+  dreaming = true;
+  const d = dreamState(), since = Number(d.at) || 0, startedAt = Date.now();
+  let timer = null;
+  try {
+    const evs = (await getEvents(500)).filter(e => e.t > since && DREAM_EVENT_TYPES.includes(e.type)).reverse();   // oldest first
+    const heard = evs.filter(e => e.type === "heard");
+    // Nothing said and nothing new remembered since the last dream: nothing to dream about (and no cost).
+    if (!heard.length && !brain.memory.some(e => e.created > since)) { d.day = todayKey(); save(); return; }
+    if (d.triesDay === todayKey()) d.tries = (d.tries || 0) + 1; else { d.triesDay = todayKey(); d.tries = 1; }
+    save();
+    logEvent("state", "Dreaming: tidying memory" + (heard.length ? " and writing the journal" : ""));
+    showDreamFace();
+    // The journal is for the day of the last thing said (a dream on first open writes up yesterday).
+    const journalDate = heard.length ? isoDay(new Date(heard[heard.length - 1].t)) : null;
+    const ctrl = new AbortController();
+    timer = setTimeout(() => ctrl.abort(), DREAM_TIMEOUT_MS);
+    const res = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+      method: "POST", signal: ctrl.signal,
+      headers: { "Authorization": "Bearer " + brain.apiKey, "Content-Type": "application/json", "X-Title": "Robot Brain" },
+      body: JSON.stringify({
+        model: brain.model || "openrouter/auto", max_tokens: 3000, temperature: 0.6, usage: { include: true },
+        messages: [{ role: "system", content: dreamPrompt(journalDate) }, { role: "user", content: dreamInput(evs) }]
+      })
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data?.error?.message || ("HTTP " + res.status));
+    const cost = Number(data.usage?.cost);
+    if (Number.isFinite(cost)) { const u = usageToday(); u.dreamCost = (u.dreamCost || 0) + cost; }
+    const msg = data.choices?.[0]?.message || {};
+    const raw = Array.isArray(msg.content) ? msg.content.map(x => x?.text || "").join("") : String(msg.content || "");
+    const ops = parseJsonObject(raw);
+    if (!ops) throw new Error("the reply wasn't the JSON asked for");
+    const summary = applyDream(ops);
+    let wrote = "";
+    const jt = ops.journal && typeof ops.journal === "object" ? ops.journal.text : typeof ops.journal === "string" ? ops.journal : "";
+    if (journalDate && typeof jt === "string" && jt.trim()) {
+      const old = journal.find(j => j.date === journalDate);           // a second entry for the same day is added on
+      const text = cleanSay(jt).trim();
+      if (journalPut({ date: journalDate, text: old ? old.text + "\n\n" + text : text, rating: ops.journal.rating, t: Date.now() }))
+        wrote = `; journal written for ${journalLabel(journalDate, true)}`;
+    }
+    d.day = todayKey(); d.at = startedAt;
+    save();
+    logEvent("memory", `Dream: ${summary}; ${brain.memory.length} memories kept${wrote}`);
+    if (dashIsOpen() && dashTab === "memory") renderMemory();
+  } catch (err) {
+    dreamRetryAt = Date.now() + DREAM_RETRY_MS;
+    logEvent("error", "Dream: " + (err.name === "AbortError" ? "took too long" : err.message) + ". Memory left as it was.");
+  } finally {
+    clearTimeout(timer);
+    dreaming = false;
+    hideDreamFace();
+    setTimeout(proactiveTick, 1500);                       // a greeting that was waiting can go ahead
+  }
+}
+setInterval(dreamTick, 30000);
+setTimeout(dreamTick, 700);                                // first open of the day: dream straight away
+document.addEventListener("visibilitychange", () => {
+  if (!document.hidden) { dreamOpenUntil = Date.now() + 20000; setTimeout(dreamTick, 700); }
+});
 
 document.body.classList.toggle("debug", !!brain.debug);
 
