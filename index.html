@@ -386,6 +386,8 @@
   .ev.t-error .tag { color: #ff8a80; }
   .ev.t-search .tag { color: #c9a8ff; }
   .ev.t-remark .tag { color: #f2d98a; }       .ev.t-mood .tag { color: #8fd3d0; }
+  .ev.t-ignored .txt { color: var(--muted); }
+  .faint { opacity: .45; font-style: italic; }
   .ev-links { display: flex; flex-direction: column; gap: 2px; margin-top: 4px; }
   .ev-links a { color: var(--accent); font-size: 13px; text-decoration: none; overflow-wrap: anywhere; padding: 3px 0; }
   .ev-links a:active { text-decoration: underline; }
@@ -643,6 +645,20 @@
       <small>Winslow's eyes follow your face using the front camera. Face-finding runs on this phone and no
         pictures leave it. The camera stays on while it's switched on, so it uses more battery.</small>
 
+      <label class="check"><input type="checkbox" id="sFaceGate"> Only listen when I'm in view</label>
+      <small>Works with Follow faces. If Winslow hasn't seen a face in the last 5 seconds, whatever the microphone
+        picked up is treated as background sound and ignored. Typed messages always go through.</small>
+
+      <label class="check"><input type="checkbox" id="sNoisy"> Noisy room mode</label>
+      <small>Winslow only acts on sentences that include his name (or something that sounds very like it), such as
+        "Winslow, what time is it". Everything else is ignored. For rooms with a television or other people talking.</small>
+
+      <label for="sSense">Listening sensitivity: <span id="senseVal"></span></label>
+      <input type="range" id="sSense" min="0" max="2" step="1">
+      <small>How sure Winslow must be before acting on what he hears. Strict ignores more background sound but may
+        miss you; Relaxed accepts single words and fainter speech. With "Show debug info" on, ignored sound shows as
+        a faint "(ignored background sound)", and every one is in the dashboard log.</small>
+
       <label for="sSleep">Sleep after</label>
       <select id="sSleep">
         <option value="0">Never</option>
@@ -727,7 +743,7 @@
    1. STORAGE: everything the robot knows lives in one object,
       saved in this browser's localStorage (on the phone).
    ========================================================= */
-const APP_VERSION = "v5.7";
+const APP_VERSION = "v5.8";
 // iPhone bug: after rotating, fixed buttons can be drawn in one place but tappable in another.
 // Snapping the page back to the top re-syncs them.
 function resyncLayout() {
@@ -761,6 +777,9 @@ const DEFAULTS = {
   camera: "user",    // "user" = front, "environment" = back
   sleepAfter: 2,     // minutes idle before getting sleepy; 0 = never
   followFaces: false,
+  faceGate: true,    // "Only listen when I'm in view" (only applies while Follow faces is on)
+  noisy: false,      // "Noisy room mode": act only on sentences that contain the robot's name
+  sensitivity: "normal",   // "Listening sensitivity": "strict" | "normal" | "relaxed" (LISTEN_LEVELS)
   debug: false,      // show version + sleep timer bottom-left
   hintShown: false,  // first-run "tap my face" hint already shown
   snapHints: 0,      // times the "Tap to snap" hint has shown under the camera bubble (max 3)
@@ -1274,6 +1293,7 @@ function speak(text, onDone, opts = {}) {
   const finish = () => {
     if (finished) return; finished = true;
     clearTimeout(fallback);
+    speechEndedAt = Date.now();                          // the mic stays shut for 300 ms after this
     if (gen === speakGen) { speakingUntil = 0; sayEnd(); mouthOff(); }   // unless a newer line cut this one off
     onDone && onDone();
     continueConvo();                                     // conversation mode: listen again
@@ -1296,11 +1316,121 @@ let rec = null, listening = false;
 // Conversation mode: after one mic tap, Winslow listens again after each reply,
 // until you go quiet for CONVO_MAX_SILENT rounds or tap the face again.
 const CONVO_MAX_SILENT = 1;          // one quiet round ends the chat
-const PAUSE_TO_SEND_MS = 1300;       // after you stop talking this long, send (don't wait for the browser)
+const CONVO_MAX_IGNORED = 3;         // this many discarded sounds in a row pause the chat (a noisy room can't hold the mic open)
+const PAUSE_TO_SEND_MS = 2000;       // after you stop talking this long, send (don't wait for the browser)
 const NO_SPEECH_MS = 6000;           // nothing said this long after the mic opens: give up
-let convo = false, convoSilent = 0, awaitingReply = false;
+const AFTER_SPEECH_MS = 300;         // never listen until this long after Winslow's own voice stops
+let convo = false, convoSilent = 0, convoIgnored = 0, awaitingReply = false;
+let listenGen = 0, speechEndedAt = 0, silentUntil = 0;
+
+/* ---------- Background sound: what counts as being spoken to ----------
+   Applies to the microphone only; typed messages always go through.
+   "Listening sensitivity" picks a row: conf = lowest confidence accepted for a final result,
+   clarify = below this, a web search or movement request is confirmed first ("Did you say…?"),
+   minWords = shorter than this must be a known short command, faceMs = how recently a face
+   must have been seen for "Only listen when I'm in view". A confidence of 0 means the browser
+   didn't report one (common on iPhone): then only the word, face and name rules apply. */
+const LISTEN_LEVELS = {
+  strict:  { label: "Strict",  conf: 0.75, clarify: 0.85, minWords: 2, faceMs: 5000 },
+  normal:  { label: "Normal",  conf: 0.60, clarify: 0.75, minWords: 2, faceMs: 5000 },
+  relaxed: { label: "Relaxed", conf: 0.45, clarify: 0.60, minWords: 1, faceMs: 5000 }
+};
+const LISTEN_ORDER = ["strict", "normal", "relaxed"];
+const listenKey = () => LISTEN_ORDER.includes(brain.sensitivity) ? brain.sensitivity : "normal";
+const listenLevel = () => LISTEN_LEVELS[listenKey()];
+const SHORT_CMD_RE = /^(stop|yes|no|yeah|yep|yup|nope|ok|okay|thanks|thank you|close|cancel|done|exit|hello|hi|hey|bye|goodbye|goodnight|help)$/;
+const DASH_WORD_RE = /^(notes?|logs?|memory|journal|senses|status)$/;
+const MOVE_RE = /\b(spin|jump|walk|move|drive|roll|dance|come here|follow me|turn (?:around|left|right)|go (?:forward|forwards|back|backwards|left|right)|grab|pick (?:it |that |this )?up|stand up|sit down)\b/i;
+const YES_RE = /^(yes|yeah|yep|yup|correct|right|that'?s right|i did|indeed|exactly|affirmative|sure|ok|okay)\b/;
+const NO_RE = /^(no|nope|nah|i didn'?t|i did not|wrong|incorrect|negative|never ?mind|cancel)\b/;
+const CONFIRM_MS = 45000;            // how long a "Did you say…?" stays open
+let pendingConfirm = null;           // { text, at }: waiting for yes or no before acting on something half-heard
+const plainWords = s => String(s).toLowerCase().replace(/[^a-z0-9' ]/g, " ").replace(/\s+/g, " ").trim();
+function isShortCommand(text) {
+  const t = plainWords(text);
+  return SHORT_CMD_RE.test(t) || (dashIsOpen() && DASH_WORD_RE.test(t)) || t === plainWords(brain.name);
+}
+// "Only listen when I'm in view": needs Follow faces actually running on its own camera stream.
+function faceGateOn() {
+  return brain.faceGate !== false && !!brain.followFaces && !!detector && !!trackStream && !previewOpen() && !document.hidden;
+}
+function editDistance(a, b) {
+  let prev = Array.from({ length: b.length + 1 }, (_, j) => j);
+  for (let i = 1; i <= a.length; i++) {
+    const cur = [i];
+    for (let j = 1; j <= b.length; j++) cur[j] = Math.min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
+    prev = cur;
+  }
+  return prev[b.length];
+}
+// Finds the robot's name, or a close mishearing ("wins low", "Winston", "window"), and takes it out.
+// A mishearing that is a real word is only removed at the start or end, where a name would be:
+// "Window, what time is it" loses it, "open the window" keeps it.
+function findName(text) {
+  const name = brain.name.toLowerCase().replace(/[^a-z0-9]/g, "");
+  if (name.length < 2) return { found: true, text };
+  const toks = text.split(/\s+/).filter(Boolean), norm = toks.map(w => w.toLowerCase().replace(/[^a-z0-9]/g, ""));
+  const maxD = name.length <= 4 ? 1 : 2;
+  let best = null;
+  for (let n = 1; n <= 3; n++) for (let i = 0; i + n <= toks.length; i++) {
+    const cand = norm.slice(i, i + n).join("");
+    if (!cand || cand[0] !== name[0] || Math.abs(cand.length - name.length) > maxD) continue;
+    const d = editDistance(cand, name);
+    if (d <= maxD && (!best || d < best.d)) best = { i, n, d };
+  }
+  if (!best) return { found: false, text };
+  if (best.d === 0 || best.i === 0 || best.i + best.n === toks.length) toks.splice(best.i, best.n);
+  const rest = toks.join(" ").replace(/^[\s,.!?;:-]+|[\s,;:-]+$/g, "").replace(/^(?:hey|ok|okay|oh|um|so|and)[\s,]+/i, "").trim();
+  return { found: true, text: /^(?:hey|ok|okay|oh|um|so|and)?$/i.test(rest) ? "" : rest };
+}
+// parts = [{ text, conf }] from one listen. Returns { ok, text, conf, why }.
+function judgeHeard(parts) {
+  const L = listenLevel(), join = list => list.map(p => p.text).join(" ").replace(/\s+/g, " ").trim();
+  const lowest = list => { const k = list.filter(p => p.conf > 0).map(p => p.conf); return k.length ? Math.min(...k) : 0; };
+  const kept = parts.filter(p => !(p.conf > 0 && p.conf < L.conf));          // 0 = unknown: can't be judged on confidence
+  if (!kept.length) return { ok: false, text: join(parts), conf: lowest(parts), why: `confidence below ${L.conf}` };
+  let text = join(kept), named = false;
+  const conf = lowest(kept);
+  if (faceGateOn() && Date.now() - lastFaceAt > L.faceMs)
+    return { ok: false, text, conf, why: `no face in view in the last ${L.faceMs / 1000} seconds` };
+  // A yes or no to an open "Did you say…?" needn't carry the name or be two words long.
+  const confirming = !!pendingConfirm && Date.now() - pendingConfirm.at < CONFIRM_MS;
+  const answer = confirming && (YES_RE.test(plainWords(text)) || NO_RE.test(plainWords(text)));
+  if (brain.noisy && !confirming) {
+    const n = findName(text);
+    if (!n.found) return { ok: false, text, conf, why: `noisy room mode: didn't hear "${brain.name}"` };
+    named = true; text = n.text || text;                   // just the name on its own: let him answer to it
+  }
+  const words = text.split(" ").filter(Boolean).length;
+  if (!named && !answer && words < L.minWords && !isShortCommand(text))
+    return { ok: false, text, conf, why: `only ${words} word${words === 1 ? "" : "s"}, and not a short command` };
+  return { ok: true, text, conf };
+}
+function ignoreHeard(v) {
+  logEvent("ignored", `"${v.text}": ${v.why} (confidence ${v.conf > 0 ? v.conf.toFixed(2) : "not reported"})`);
+  show(brain.debug ? `<span class="faint">(ignored background sound)</span>` : "");
+}
+// Would acting on this be a nuisance if it was misheard? A web search costs money; a movement, one day, moves.
+function riskyRequest(text) {
+  return MOVE_RE.test(text) || (searchOn() && ASKING_RE.test(text.trim()) && (MUST_SEARCH_RE.test(text) || /\b(search|look up|google)\b/i.test(text)));
+}
+function actOnHeard(v) {
+  if (!pendingConfirm && v.conf > 0 && v.conf < listenLevel().clarify && riskyRequest(v.text)) {
+    pendingConfirm = { text: v.text, at: Date.now() };
+    logEvent("heard", `${v.text} (unsure: confidence ${v.conf.toFixed(2)}, so asked to confirm)`);
+    setMood("thinking");
+    speak(`Did you say "${v.text.replace(/[.?!]+$/, "")}", ${addr()}?`, () => {
+      setMood("neutral");
+      // Conversation mode listens again by itself; otherwise open the mic for the yes or no.
+      if (!convo) setTimeout(() => { if (pendingConfirm && !listening && !busy) startListening(true); }, AFTER_SPEECH_MS + 50);
+    });
+    return;
+  }
+  think(v.text);
+}
+
 function endConvo(msg) {
-  convo = false; awaitingReply = false; convoSilent = 0;
+  convo = false; awaitingReply = false; convoSilent = 0; convoIgnored = 0;
   micBtn.classList.remove("convo");
   if (msg) show(msg);
 }
@@ -1317,11 +1447,25 @@ function continueConvo() {                              // called whenever Winsl
 
 function startListening(auto = false) {
   if (!SR) { endConvo(); show("Speech recognition isn't supported here. Type instead."); return; }
+  // Never listen over his own voice: a tap cuts him off, then the room gets 300 ms to go quiet.
+  const gen = ++listenGen;
+  const aloud = isSpeaking() && Date.now() >= silentUntil;                 // words shown without a voice make no sound
   if ("speechSynthesis" in window && speechSynthesis.speaking) speechSynthesis.cancel();
+  if (aloud) { speakingUntil = 0; speechEndedAt = Date.now(); }
+  const wait = speechEndedAt + AFTER_SPEECH_MS - Date.now();
+  if (wait > 0) {
+    // (If the phone refuses a mic start this long after the tap, it is handled like an automatic restart.)
+    setTimeout(() => { if (gen === listenGen && !listening && !rec && !document.hidden) openMic(true); }, wait);
+    return;
+  }
+  openMic(auto);
+}
+function openMic(auto) {
   rec = new SR();
   rec.lang = "en-US";
   rec.interimResults = true;
   rec.continuous = false;
+  const finals = [];                                     // [{ text, conf }] for each finished piece of speech
   let finalText = "", lastInterim = "", endTimer = null;
   const me = rec;
   // Our own end-of-speech timing: browsers (esp. iPhone) wait a long time before finishing.
@@ -1338,7 +1482,8 @@ function startListening(auto = false) {
     let interim = "";
     for (let i = e.resultIndex; i < e.results.length; i++) {
       const t = e.results[i][0].transcript;
-      if (e.results[i].isFinal) finalText += t; else interim += t;
+      if (e.results[i].isFinal) { finalText += t; finals.push({ text: t, conf: Number(e.results[i][0].confidence) || 0 }); }
+      else interim += t;
     }
     lastInterim = interim;
     show(`<b>You:</b> ${esc(finalText || interim)}`);
@@ -1357,11 +1502,22 @@ function startListening(auto = false) {
     if (document.hidden) return;                         // app was closed mid-sentence: don't answer
     clearTimeout(endTimer);
     // If we stopped it ourselves before the browser marked words "final", use what it heard so far.
-    const text = finalText.trim() || lastInterim.trim();
-    if (text) {
-      convoSilent = 0;
-      if (convo) awaitingReply = true;
-      think(text);
+    // (Unfinished words carry no confidence: 0 = unknown.)
+    const parts = finalText.trim() ? finals : lastInterim.trim() ? [{ text: lastInterim, conf: 0 }] : [];
+    if (parts.length) {
+      const v = judgeHeard(parts);                       // confidence, face, name and word-count rules
+      if (v.ok) {
+        convoSilent = 0; convoIgnored = 0;
+        if (convo) awaitingReply = true;
+        actOnHeard(v);
+        return;
+      }
+      ignoreHeard(v);
+      if (autoBlocked) { endConvo("Tap my face to keep talking."); return; }
+      if (convo) {                                       // keep listening, but not for ever in a noisy room
+        if (++convoIgnored < CONVO_MAX_IGNORED) setTimeout(() => { if (convo && !listening) startListening(true); }, 300);
+        else endConvo("Chat paused. Tap my face when you want to talk again.");
+      } else if (!brain.debug) show("I didn't catch that. Tap my face and try again.");
       return;
     }
     if (autoBlocked) { endConvo("Tap my face to keep talking."); return; }
@@ -1382,6 +1538,7 @@ let listenCap = null;
 // Fully release the mic (and speech/sound) when the app is closed or hidden.
 function releaseMic() {
   clearTimeout(listenCap);
+  listenGen++; pendingConfirm = null;                    // cancels a mic start that was waiting for quiet
   if (rec) { try { rec.abort(); } catch {} }
   rec = null; listening = false;
   micBtn.classList.remove("on"); document.body.classList.remove("listening");
@@ -1399,6 +1556,7 @@ function toggleMic() {
   bumpIdle();                                            // talking counts as camera-preview activity
   if (convo || listening) {                              // tap again = stop the conversation
     const wasListening = listening;
+    listenGen++;                                         // cancels a mic start that was waiting for quiet
     endConvo();
     if (wasListening && rec) rec.stop();                 // still answers what you just said
     else show("Very well. I shall stop listening.");
@@ -1782,6 +1940,20 @@ let photoSentThisPreview = false;                       // reset each time the p
 let busy = false;
 async function think(userText, image) {
   if (busy || capturing) return;
+  // Answering "Did you say…?": yes acts on what was half-heard, no drops it, anything else is a fresh request.
+  if (pendingConfirm) {
+    const pc = pendingConfirm, t = plainWords(userText), short = t.split(" ").length <= 4;
+    pendingConfirm = null;
+    if (Date.now() - pc.at < CONFIRM_MS && short && YES_RE.test(t)) {
+      logEvent("heard", userText + " (confirmed)");
+      return think(pc.text, image);
+    }
+    if (Date.now() - pc.at < CONFIRM_MS && short && NO_RE.test(t)) {
+      logEvent("heard", userText + " (so not what was said)");
+      speak(pick([`My mistake, ${addr()}. Do say it again.`, `Then I misheard, ${addr()}. Once more, if you would.`]));
+      return;
+    }
+  }
   logEvent("heard", userText);
   heardHook(userText);                                   // mood from the words; they're here and talking (section 11)
   // "Forget that" and "read me yesterday's journal" are handled here, with or without the AI.
@@ -2176,6 +2348,9 @@ function openSettings() {
   $("sAddress").value = addr();
   $("sCamera").value = brain.camera === "environment" ? "environment" : "user";
   $("sFollow").checked = !!brain.followFaces;
+  $("sFaceGate").checked = brain.faceGate !== false;
+  $("sNoisy").checked = !!brain.noisy;
+  $("sSense").value = LISTEN_ORDER.indexOf(listenKey());
   $("sConvo").checked = brain.convo !== false;
   $("sWeb").checked = brain.webSearch !== false;
   $("sEngine").value = engineNow();
@@ -2228,7 +2403,9 @@ if ("speechSynthesis" in window) speechSynthesis.addEventListener("voiceschanged
 function sliderLabels() {
   $("pitchVal").textContent = Number($("sPitch").value).toFixed(2);
   $("rateVal").textContent = Number($("sRate").value).toFixed(2) + "×";
+  $("senseVal").textContent = LISTEN_LEVELS[LISTEN_ORDER[+$("sSense").value] || "normal"].label;
 }
+$("sSense").addEventListener("input", sliderLabels);
 $("sPitch").addEventListener("input", sliderLabels);
 $("sRate").addEventListener("input", sliderLabels);
 const PREVIEW_LINES = () => [`${brain.name}, at your service, ${addr()}.`, `Your shoes, ${addr()}? A respectable seven out of ten.`,
@@ -2283,6 +2460,9 @@ $("btnSave").addEventListener("click", () => {
   if (!brain.convo) endConvo();
   const followWas = !!brain.followFaces;
   brain.followFaces = $("sFollow").checked;
+  brain.faceGate = $("sFaceGate").checked;
+  brain.noisy = $("sNoisy").checked;
+  brain.sensitivity = LISTEN_ORDER[+$("sSense").value] || "normal";
   save();
   if (brain.followFaces && !followWas) startTracking();
   if (!brain.followFaces && followWas) stopTracking();
@@ -2324,6 +2504,8 @@ $("btnImport").addEventListener("click", async () => {
     if (![0, 2, 5, 10].includes(brain.sleepAfter)) brain.sleepAfter = 2;
     brain.followFaces = old.followFaces;                   // device-specific: a backup doesn't switch the camera on
     if (!isProLevel(brain.proactive)) brain.proactive = "rarely";
+    if (!LISTEN_ORDER.includes(brain.sensitivity)) brain.sensitivity = "normal";
+    brain.faceGate = brain.faceGate !== false; brain.noisy = !!brain.noisy;
     brain.quietHours = brain.quietHours !== false;
     if (!validTime(brain.quietFrom)) brain.quietFrom = DEFAULTS.quietFrom;
     if (!validTime(brain.quietTo)) brain.quietTo = DEFAULTS.quietTo;
@@ -2717,7 +2899,7 @@ if (window.visualViewport) {
        Memory, Senses, Status. Never shows the API key.
    ========================================================= */
 const DASH_TABS = ["notes", "logs", "memory", "journal", "senses", "status"];
-const LOG_TYPES = { heard: "Heard", said: "Said", saw: "Saw", memory: "Memory", search: "Search", remark: "Remark", mood: "Mood", state: "State", error: "Error" };
+const LOG_TYPES = { heard: "Heard", said: "Said", saw: "Saw", memory: "Memory", search: "Search", remark: "Remark", mood: "Mood", ignored: "Ignored", state: "State", error: "Error" };
 const dashSay = $("dashSay"), dashBody = $("dashBody"), logList = $("logList"), factList = $("factList");
 const senseVideo = $("senseVideo"), senseCamMsg = $("senseCamMsg"), dashMic = $("dashMic");
 let logFilter = "all", dashTicker = null, sensesOpening = false;
@@ -3117,7 +3299,10 @@ function renderStatus() {
       ? new Date(dreamState().at).toLocaleString([], { weekday: "short", hour: "numeric", minute: "2-digit" }) + (dreamState().day === todayKey() ? " (done for today)" : "")
       : "Not yet"],
     ["Voice", brain.voiceName || "Automatic (British first)"],
-    ["Web search", !brain.apiKey ? "Needs an API key" : searchOn() ? `On: ${SEARCH_ENGINES[engineNow()]}, 1 search per reply, 3 results` : searchBroken ? "Not available with this model" : "Off"],
+    ["Listening", `${listenLevel().label} sensitivity` +
+      (brain.faceGate !== false && brain.followFaces ? (faceGateOn() ? ", only when you're in view" : ", in-view check paused (no face camera just now)") : "") +
+      (brain.noisy ? `, noisy room mode (say "${brain.name}")` : "")],
+    ["Web search", !brain.apiKey ?"Needs an API key" : searchOn() ? `On: ${SEARCH_ENGINES[engineNow()]}, 1 search per reply, 3 results` : searchBroken ? "Not available with this model" : "Off"],
     ["Search cost today (est.)", `$${(u.searchCost || 0).toFixed(4)} (${u.searches || 0} search${u.searches === 1 ? "" : "es"})`],
     ["Home city", brain.homeCity || "Not set"], ["Local time", nowText()],
     ["Body connection", "Not connected (no body yet)", true]]));
@@ -3461,7 +3646,7 @@ function recordRemark(r, text, byAi, how) {
 // Words at the mouth with no voice, timed like speech (quiet hours, or no tap yet this visit).
 function silentSay(text, onDone) {
   const gen = ++speakGen, ms = Math.min(20000, 1500 + text.length * 1000 / 12);
-  speakingUntil = Date.now() + ms; lastSaidAt = Date.now();
+  speakingUntil = silentUntil = Date.now() + ms; lastSaidAt = Date.now();
   sayStart(text, 1);
   setTimeout(() => { if (gen !== speakGen) return; speakingUntil = 0; sayEnd(4000); onDone && onDone(); }, ms);
 }
