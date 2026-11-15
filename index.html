@@ -6,6 +6,9 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black">
 <meta name="theme-color" content="#05090c">
+<link rel="manifest" href="manifest.json">
+<link rel="icon" type="image/png" sizes="192x192" href="icons/icon-192.png">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
 <title>Winslow</title>
 <style>
   :root {
@@ -887,7 +890,7 @@
    1. STORAGE: everything the robot knows lives in one object,
       saved in this browser's localStorage (on the phone).
    ========================================================= */
-const APP_VERSION = "v6.1";         // keep version.json in step with this
+const APP_VERSION = "v6.2";         // keep version.json in step with this
 // iPhone bug: after rotating, fixed buttons can be drawn in one place but tappable in another.
 // Snapping the page back to the top re-syncs them.
 function resyncLayout() {
@@ -2805,6 +2808,17 @@ document.addEventListener("keydown", (e) => {
   } else wake();
 }, true);
 document.addEventListener("visibilitychange", () => { if (!document.hidden) { poke(); keepScreenOn(); notePresence("open"); } });
+// Ask right away too (Chrome allows it without a tap while the page is visible;
+// if refused, the first tap asks again). The browser drops it when the page is
+// hidden, and the visibilitychange above takes it back.
+keepScreenOn();
+
+// Installable app (PWA): a minimal network-first service worker (sw.js) so Chrome
+// offers "Install app". It never caches API calls or version.json.
+if ("serviceWorker" in navigator && (location.protocol === "https:" || location.hostname === "localhost" || location.hostname === "127.0.0.1")) {
+  const regSW = () => navigator.serviceWorker.register("sw.js").catch(e => console.warn("Service worker not registered:", e));
+  if (document.readyState === "complete") regSW(); else window.addEventListener("load", regSW);
+}
 
 // Testing aid: the version label also shows the sleep countdown.
 const versionEl = document.getElementById("version");
