@@ -890,7 +890,7 @@
    1. STORAGE: everything the robot knows lives in one object,
       saved in this browser's localStorage (on the phone).
    ========================================================= */
-const APP_VERSION = "v6.2";         // keep version.json in step with this
+const APP_VERSION = "v6.3";         // keep version.json in step with this
 // iPhone bug: after rotating, fixed buttons can be drawn in one place but tappable in another.
 // Snapping the page back to the top re-syncs them.
 function resyncLayout() {
@@ -2111,6 +2111,10 @@ const LOOK_RE = /\b(what (do|can) you see|look at (this|that|me|my)|take a look|
 // With the preview open, words like these mean "this is about what's in front of you".
 const VISUAL_RE = /\b(see|seeing|look|looks|looking|this|these|those|here|hold|holding|wearing|wear|colou?rs?|show|showing|picture|photo|camera|read|count|how many|who is|who's|what is this|what's this|now)\b/i;
 let photoSentThisPreview = false;                       // reset each time the preview opens
+// Asked by voice or typing, he waits this long before the photo so the camera can be aimed
+// (with a "Hold it there" caption). A tap on the bubble is a shutter press: no wait.
+const SNAP_DELAY_MS = 1500;
+let snapNow = false;                                    // set by snapFromBubble() for the next think()
 
 let busy = false;
 // `image`: a camera frame (data URL). `file`: something shared from the text box (section 14):
@@ -2155,11 +2159,17 @@ async function think(userText, image, file) {
     (previewOpen() && (!photoSentThisPreview || VISUAL_RE.test(userText)));
   if (!image && !file && wantsPhoto) {
     if (!brain.apiKey) { noBrainForEyes(); return; }
+    const instant = snapNow; snapNow = false;
     capturing = true;
     try {
       if (!previewOpen()) {
         if (!(await openPreview())) return;
         await sleep(500);                               // let auto-exposure settle
+      }
+      if (!instant) {
+        show(`Hold it there, ${addr()}…`);
+        await sleep(SNAP_DELAY_MS);
+        if (!previewOpen()) { show("Camera off."); return; }   // closed while aiming: no photo
       }
       bumpIdle();
       image = await grabFrame();
@@ -2542,6 +2552,7 @@ function snapFromBubble() {
   bumpIdle();
   const t = "What do you see?";
   show(`<b>You:</b> ${esc(t)}`);
+  snapNow = true;
   think(t);
 }
 pvClip.addEventListener("click", snapFromBubble);
