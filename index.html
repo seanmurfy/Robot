@@ -529,6 +529,10 @@
   .fcard .finfo { flex: 1; min-width: 0; font-size: 15px; line-height: 1.4; overflow-wrap: anywhere; }
   .fcard .finfo small { display: block; color: var(--muted); font-size: 12px; margin-top: 2px; }
   .fcard .finfo i { display: block; color: var(--muted); font-size: 13px; }
+  /* People tab (known faces, section 15) */
+  .pcard .fthumb, .pcard .fdoc { border-radius: 50%; }
+  .pcard .pbtns { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+  .pcard .pme { display: inline-block; margin-left: 6px; padding: 0 8px; border-radius: 8px; background: #1a262d; color: var(--eye); font-size: 12px; }
   /* Winslow offering a button in his reply ("back yourself up": downloads need a tap) */
   #actCard { position: fixed; left: 50%; bottom: calc(24px + env(safe-area-inset-bottom)); transform: translateX(-50%); z-index: 64;
              width: min(calc(100vw - 32px), 420px); padding: 14px 16px; border-radius: 18px; background: var(--panel);
@@ -686,6 +690,7 @@
         <button role="tab" id="tab-memory" data-tab="memory" aria-controls="p-memory">Memory</button>
         <button role="tab" id="tab-journal" data-tab="journal" aria-controls="p-journal">Journal</button>
         <button role="tab" id="tab-files" data-tab="files" aria-controls="p-files">Files</button>
+        <button role="tab" id="tab-people" data-tab="people" aria-controls="p-people">People</button>
         <button role="tab" id="tab-senses" data-tab="senses" aria-controls="p-senses">Senses</button>
         <button role="tab" id="tab-status" data-tab="status" aria-controls="p-status">Status</button>
       </div>
@@ -717,6 +722,12 @@
           <div id="fileList"></div>
           <p class="dash-note">Photos and files you've shared with me, kept on this phone only. A photo is only sent to the AI
             again if you ask about it.</p>
+        </section>
+        <section class="dpanel" id="p-people" role="tabpanel" aria-labelledby="tab-people">
+          <div id="peopleList"></div>
+          <p class="dash-note">Faces I know. To add one, look at me and say "remember my face", or "remember this face" for
+            someone else. Face prints are sets of numbers kept on this phone only; they are never sent to the AI.
+            Recognising faces needs Follow faces switched on, and is not reliable enough to be used as a lock.</p>
         </section>
         <section class="dpanel" id="p-senses" role="tabpanel" aria-labelledby="tab-senses">
           <div class="senseCam"><video id="senseVideo" playsinline muted autoplay aria-label="Live camera view"></video><div id="senseCamMsg"></div></div>
@@ -771,7 +782,8 @@
 
       <label class="check"><input type="checkbox" id="sFollow"> Follow faces</label>
       <small>Winslow's eyes follow your face using the front camera. Face-finding runs on this phone and no
-        pictures leave it. The camera stays on while it's switched on, so it uses more battery.</small>
+        pictures leave it. The camera stays on while it's switched on, so it uses more battery. He can also learn
+        who people are: look at him and say "remember my face". Known faces are listed on the dashboard's People tab.</small>
 
       <label class="check"><input type="checkbox" id="sFaceGate"> Only listen when I'm in view</label>
       <small>Works with Follow faces. If Winslow hasn't seen a face in the last 5 seconds, whatever the microphone
@@ -855,6 +867,8 @@
       <label class="check"><input type="checkbox" id="bPhotos"> Include shared photos</label>
       <small>Also includes the text of shared documents. Makes the file much larger; without it, shared files are kept
         as names and descriptions only. PDFs themselves are never included.</small>
+      <label class="check"><input type="checkbox" id="bFaces"> Include known faces</label>
+      <small>The face prints and names from the People tab. Left out unless you tick this, because they identify people.</small>
       <div class="row">
         <button id="btnBackup">Download backup</button>
         <button id="btnRestore">Restore from backup</button>
@@ -890,7 +904,7 @@
    1. STORAGE: everything the robot knows lives in one object,
       saved in this browser's localStorage (on the phone).
    ========================================================= */
-const APP_VERSION = "v6.3";         // keep version.json in step with this
+const APP_VERSION = "v6.4";         // keep version.json in step with this
 // iPhone bug: after rotating, fixed buttons can be drawn in one place but tappable in another.
 // Snapping the page back to the top re-syncs them.
 function resyncLayout() {
@@ -1008,7 +1022,7 @@ let logDb = null, logMem = [];
 const logListeners = [];
 const logReady = new Promise(res => {
   try {
-    const req = indexedDB.open("winslowLog", 4);           // v2 adds the journal store, v3 timers, v4 shared files
+    const req = indexedDB.open("winslowLog", 5);           // v2 adds the journal store, v3 timers, v4 shared files, v5 known faces
     req.onupgradeneeded = () => {
       const db = req.result;
       if (!db.objectStoreNames.contains("events")) db.createObjectStore("events", { keyPath: "id", autoIncrement: true });
@@ -1016,6 +1030,7 @@ const logReady = new Promise(res => {
       if (!db.objectStoreNames.contains("timers")) db.createObjectStore("timers", { keyPath: "id" });
       if (!db.objectStoreNames.contains("files")) db.createObjectStore("files", { keyPath: "id" });         // shared files: name, kind, date, thumbnail
       if (!db.objectStoreNames.contains("fileData")) db.createObjectStore("fileData", { keyPath: "id" });   // ...and their full contents, read only when needed
+      if (!db.objectStoreNames.contains("people")) db.createObjectStore("people", { keyPath: "id" });       // known faces: name + face prints (section 15)
     };
     req.onsuccess = () => {
       logDb = req.result;
@@ -1496,7 +1511,7 @@ const LISTEN_ORDER = ["strict", "normal", "relaxed"];
 const listenKey = () => LISTEN_ORDER.includes(brain.sensitivity) ? brain.sensitivity : "normal";
 const listenLevel = () => LISTEN_LEVELS[listenKey()];
 const SHORT_CMD_RE = /^(stop|yes|no|yeah|yep|yup|nope|ok|okay|thanks|thank you|close|cancel|done|exit|hello|hi|hey|bye|goodbye|goodnight|help)$/;
-const DASH_WORD_RE = /^(notes?|timers?|logs?|memory|journal|files?|senses|status)$/;
+const DASH_WORD_RE = /^(notes?|timers?|logs?|memory|journal|files?|people|senses|status)$/;
 const MOVE_RE = /\b(spin|jump|walk|move|drive|roll|dance|come here|follow me|turn (?:around|left|right)|go (?:forward|forwards|back|backwards|left|right)|grab|pick (?:it |that |this )?up|stand up|sit down)\b/i;
 const YES_RE = /^(yes|yeah|yep|yup|correct|right|that'?s right|i did|indeed|exactly|affirmative|sure|ok|okay)\b/;
 const NO_RE = /^(no|nope|nah|i didn'?t|i did not|wrong|incorrect|negative|never ?mind|cancel)\b/;
@@ -1553,7 +1568,8 @@ function judgeHeard(parts) {
   // A yes or no to an open "Did you say…?" needn't carry the name or be two words long.
   const confirming = !!pendingConfirm && Date.now() - pendingConfirm.at < CONFIRM_MS;
   const answer = (confirming && (YES_RE.test(plainWords(text)) || NO_RE.test(plainWords(text)))) ||
-    (ringing.length > 0 && isDismissal(text));             // "thank you" / "stop" to a ringing timer, too
+    (ringing.length > 0 && isDismissal(text)) ||           // "thank you" / "stop" to a ringing timer, too
+    (!!pendingFace && Date.now() - pendingFace.at < FACE_ASK_MS);   // a name, or yes/no, when he has just asked about a face (section 15)
   if (brain.noisy && !answer && !confirming) {
     const n = findName(text);
     if (!n.found) return { ok: false, text, conf, why: `noisy room mode: didn't hear "${brain.name}"` };
@@ -1757,7 +1773,7 @@ USING YOUR MEMORY: draw on it the way an attentive butler would, lightly and nev
 Right now it is ${nowText()}.${brain.homeCity ? ` Your human lives in or near ${brain.homeCity}; use that for anything local (weather, opening hours, events) unless they name another place.` : ""}
 
 ${moodPrompt()}
-
+${facePromptText()}
 ${searchOn() && !noSearch ? `CURRENT FACTS: you have a web search tool. Use it for anything time-sensitive or that may have changed since your training: sports fixtures, schedules and scores, weather, news, prices, opening hours, release dates, who currently holds a role, and anything "latest", "today", "tonight", "this week" or "next". Answer from what the search finds. If the search fails or finds nothing useful, say so plainly in character, for example "I'm afraid I can't confirm that at present, ${addr()}." Never guess or invent current facts.
 You get ONE search per reply, so make the query count. Write it self-contained: replace words like "they", "he", "she", "it", "there" and "next" with the actual names from the conversation, and for schedules or fixtures include the month and year, for example "New England Patriots next game ${new Date().toLocaleDateString("en-GB", { month: "long", year: "numeric" })}".${recentSearchText()}`
   : `CURRENT FACTS: you cannot search the web right now. For anything time-sensitive (scores, schedules, weather, news, prices, opening hours, anything "latest"), do not guess: say plainly, in character, that you can't confirm it at present, for example "I'm afraid I can't confirm that at present, ${addr()}." You may still use the date and time above.`}
@@ -1781,7 +1797,7 @@ Use "remember" only for genuinely new, lasting things worth keeping, never for s
 For a plan or promise on a particular day, set "date" to that day as "YYYY-MM-DD" (work it out from today's date; never leave it as "tomorrow" or "next week") and also say the date in the text, such as "Dentist appointment on 14 November 2026", so you can remind your human on the day. For birthdays and anniversaries use "MM-DD" with no year. Otherwise "date" is null.
 
 Actions you can take. Put one in "action", or leave it null (the usual case):
-- "show_dashboard": open your brain dashboard when the user asks to see your brain, dashboard, logs, memory, journal or status. If they asked for one part, set "dashboard_tab" to "notes" (things you put on screen), "timers" (timers, alarms and reminders), "logs", "memory", "journal" (your diary, one entry a day), "files" (photos and files your human shared with you), "senses" or "status"; otherwise leave it null. Say a short line as you open it.
+- "show_dashboard": open your brain dashboard when the user asks to see your brain, dashboard, logs, memory, journal or status. If they asked for one part, set "dashboard_tab" to "notes" (things you put on screen), "timers" (timers, alarms and reminders), "logs", "memory", "journal" (your diary, one entry a day), "files" (photos and files your human shared with you), "people" (faces you know), "senses" or "status"; otherwise leave it null. Say a short line as you open it.
 - "backup": your human asks you to back yourself up, save or download a backup, or export your memory. Your program shows a download button (browsers need a tap), so "say" a short line asking them to tap it.
 - "recall_file": your human asks about a file or photo they shared earlier (listed below) and you need to see it again to answer. Add "item": {"id": "the file's id"}. Your program sends you the file and asks again, so "say" can simply be "One moment."
 - "set_timer": a countdown. Add "item": {"label": "short name such as pasta, or null", "seconds": the length in seconds}.
@@ -2148,6 +2164,8 @@ async function think(userText, image, file) {
   if (!file && timerCommand(userText)) return;
   // "Back yourself up": a download button in his reply (downloads need a tap), with or without the AI.
   if (!file && backupCommand(userText)) return;
+  // "Remember my face", "do you recognise me?", "forget Jack's face" (section 15), with or without the AI.
+  if (!file && faceCommand(userText)) return;
   // "Forget that" and "read me yesterday's journal" are handled here, with or without the AI.
   if (!file && memoryCommand(userText)) return;
   // With the dashboard open, short commands ("show memory", "scroll down", "that'll be all") act on it directly.
@@ -3002,7 +3020,8 @@ async function startTrackStream() {
   }
   const gen = ++trackGen;
   const stream = await navigator.mediaDevices.getUserMedia({
-    video: { facingMode: "user", width: { ideal: 320 }, height: { ideal: 240 }, frameRate: { ideal: 15 } }, audio: false
+    // 640x480 rather than 320x240: a face needs to be ~100+ px wide to be told apart from another (section 15)
+    video: { facingMode: "user", width: { ideal: 640 }, height: { ideal: 480 }, frameRate: { ideal: 15 } }, audio: false
   });
   // The preview may have opened (or tracking stopped) while we waited: never hold two streams.
   if (gen !== trackGen || previewOpen() || camOpening || document.hidden || !brain.followFaces) {
@@ -3070,7 +3089,9 @@ function trackTick() {
   catch { return scheduleTrack(next); }
   if (faces.length) {
     const area = d => d.boundingBox.width * d.boundingBox.height;
-    onFace(faces.reduce((a, b) => area(b) > area(a) ? b : a), src);
+    const big = faces.reduce((a, b) => area(b) > area(a) ? b : a);
+    lastSeenFace = { box: big.boundingBox, src, at: Date.now() };    // for telling who it is (section 15)
+    onFace(big, src);
   } else if (faceFollowing && Date.now() - lastFaceAt > LOSE_MS) {
     stopFollowing();
   }
@@ -3083,7 +3104,12 @@ function onFace(face, src) {
   const queued = notePresence("face");                  // may queue a first-of-the-day greeting or a welcome back
   if (sleepState !== "awake") { wake(); return; }       // sitting down in front of Winslow wakes it
   poke();                                               // a face counts as activity
-  if (gap >= GREET_GAP_MS && !queued) greetFace();      // a queued remark greets properly instead
+  if (gap >= FACE_GONE_MS) recogReset();                // someone else may have sat down: look again (section 15)
+  if (gap >= GREET_GAP_MS && !queued) {                 // a queued remark greets properly instead
+    if (people.length) greetWait = now;                 // with known faces, the greeting waits a moment for a name
+    else greetFace();
+  }
+  recogSee(face, src);
   if (previewOpen()) return;                            // with the preview open, eyes keep looking at it
   const b = face.boundingBox;
   const nx = (b.originX + b.width / 2) / src.videoWidth - 0.5;    // -0.5 … 0.5
@@ -3110,11 +3136,14 @@ function stopFollowing() {
   faceFollowing = false;
   document.body.classList.remove("following");
 }
-function greetFace() {
+// `who` (section 15): undefined = faces aren't being told apart; a person = greeted by name
+// (his own human as "sir"); { unknown } = a face he doesn't know, greeted without a name.
+function greetFace(who) {
   if (mood !== "neutral" || busy || listening || capturing || isSpeaking() || waking) return;
   setMood("happy"); chirp();                            // soft tone, no speech
   const tod = timeOfDay();
-  mouthSay(tod === "late" ? `Still up, ${addr()}?` : `Good ${tod}, ${addr()}.`);
+  const to = !who ? `, ${addr()}` : who.unknown ? "" : `, ${who.me ? addr() : who.name}`;
+  mouthSay(tod === "late" ? `Still up${to}?` : `Good ${tod}${to}.`);
   setTimeout(() => { if (mood === "happy") setMood("neutral"); }, 1200);
 }
 
@@ -3198,7 +3227,7 @@ if (window.visualViewport) {
        AI's "show_dashboard" action, or the offline brain. Tabs: Logs,
        Memory, Senses, Status. Never shows the API key.
    ========================================================= */
-const DASH_TABS = ["notes", "timers", "logs", "memory", "journal", "files", "senses", "status"];
+const DASH_TABS = ["notes", "timers", "logs", "memory", "journal", "files", "people", "senses", "status"];
 const LOG_TYPES = { heard: "Heard", said: "Said", saw: "Saw", memory: "Memory", search: "Search", remark: "Remark", mood: "Mood", timer: "Timers", ignored: "Ignored", state: "State", error: "Error" };
 const dashSay = $("dashSay"), dashBody = $("dashBody"), logList = $("logList"), factList = $("factList");
 const senseVideo = $("senseVideo"), senseCamMsg = $("senseCamMsg"), dashMic = $("dashMic");
@@ -3238,6 +3267,7 @@ function dashSwitch(tab) {
   if (tab === "memory") { memEditing = null; renderMemory(); }
   if (tab === "journal") renderJournal();
   if (tab === "files") renderFiles();
+  if (tab === "people") renderPeople();
   dashTick();
 }
 
@@ -3566,7 +3596,7 @@ function sensesOff() {
 function renderSenses() {
   const face = !brain.followFaces ? "Off (Follow faces is off in settings)"
     : !(trackStream || previewOpen()) ? "Paused while this view has the camera"
-    : Date.now() - lastFaceAt < 1500 ? "Yes, I can see you" : "No face in view";
+    : Date.now() - lastFaceAt < 1500 ? "Yes" + faceWhoText() : "No face in view";
   const mic = !SR ? "Not supported in this browser"
     : listening ? "Listening" + (convo ? " (conversation mode)" : "")
     : convo ? "Between turns (conversation mode)" : "Off";
@@ -3606,6 +3636,8 @@ function renderStatus() {
     ["Listening", `${listenLevel().label} sensitivity` +
       (brain.faceGate !== false && brain.followFaces ? (faceGateOn() ? ", only when you're in view" : ", in-view check paused (no face camera just now)") : "") +
       (brain.noisy ? `, noisy room mode (say "${brain.name}")` : "")],
+    ["Known faces", !people.length ? `None yet (say "remember my face")`
+      : `${people.length}: ${people.map(p => p.name).join(", ")}` + (brain.followFaces ? "" : " (Follow faces is off, so I'm not looking)")],
     ["Web search", !brain.apiKey ?"Needs an API key" : searchOn() ? `On: ${SEARCH_ENGINES[engineNow()]}, 1 search per reply, 3 results` : searchBroken ? "Not available with this model" : "Off"],
     ["Search cost today (est.)", `$${(u.searchCost || 0).toFixed(4)} (${u.searches || 0} search${u.searches === 1 ? "" : "es"})`],
     ["Home city", brain.homeCity || "Not set"], ["Local time", nowText()],
@@ -3664,9 +3696,9 @@ function dashCommand(text) {
     say(pick(dir === "up" || dir === "top" ? ["Up we go.", "There."] : ["Down we go.", "There.", "Scrolling."]));
     return true;
   }
-  if ((m = t.match(/\b(?:show|open|go to|switch to|see|view|back to)\b.*?\b(notes?|timers?|logs?|memor(?:y|ies)|journal|diary|files?|photos|senses|status)\b/) ||
-           t.match(/^(?:the |your )?(?:shared )?(notes?|timers?|logs?|memor(?:y|ies)|journal|diary|files?|photos|senses|status)(?: tab)?$/))) {
-    const tab = /^timer/.test(m[1]) ? "timers" : /^log/.test(m[1]) ? "logs" : /^memor/.test(m[1]) ? "memory" : /^note/.test(m[1]) ? "notes" : /^(journal|diary)/.test(m[1]) ? "journal" : /^(file|photo)/.test(m[1]) ? "files" : m[1];
+  if ((m = t.match(/\b(?:show|open|go to|switch to|see|view|back to)\b.*?\b(notes?|timers?|logs?|memor(?:y|ies)|journal|diary|files?|photos|people|faces|senses|status)\b/) ||
+           t.match(/^(?:the |your )?(?:shared )?(notes?|timers?|logs?|memor(?:y|ies)|journal|diary|files?|photos|people|faces|senses|status)(?: tab)?$/))) {
+    const tab = /^timer/.test(m[1]) ? "timers" : /^log/.test(m[1]) ? "logs" : /^memor/.test(m[1]) ? "memory" : /^note/.test(m[1]) ? "notes" : /^(journal|diary)/.test(m[1]) ? "journal" : /^(file|photo)/.test(m[1]) ? "files" : /^(people|faces)/.test(m[1]) ? "people" : m[1];
     dashSwitch(tab);
     say(pick([`${tab.charAt(0).toUpperCase() + tab.slice(1)}, ${a}.`, `Here you are, ${a}.`, "Certainly."]));
     return true;
@@ -5103,8 +5135,8 @@ function noSecrets(json) {
   if (brain.apiKey && brain.apiKey.length >= 8) json = json.split(brain.apiKey).join("[key]");
   return json.replace(/sk-or-[A-Za-z0-9_-]{6,}/g, "[key]");
 }
-async function buildBackup(withPhotos) {
-  await Promise.all([journalLoaded, filesLoaded]);
+async function buildBackup(withPhotos, withFaces) {
+  await Promise.all([journalLoaded, filesLoaded, peopleLoaded]);
   const settings = {};
   BACKUP_SETTINGS.forEach(k => { if (brain[k] !== undefined) settings[k] = brain[k]; });
   const logs = (await getEvents(LOG_MAX)).reverse().map(({ t, type, text, links }) => ({ t, type, text, ...(links ? { links } : {}) }));
@@ -5121,6 +5153,7 @@ async function buildBackup(withPhotos) {
   return noSecrets(JSON.stringify({
     app: "winslow", backupVersion: BACKUP_VERSION, appVersion: APP_VERSION, exportedAt: new Date().toISOString(),
     memory: brain.memory, journal, settings, logs, files,
+    ...(withFaces ? { people: people.map(personOut) } : {}),          // face prints only when asked for (section 15)
     chat: { history: brain.history, notes: Array.isArray(brain.notes) ? brain.notes : [] }
   }, null, 1));
 }
@@ -5133,15 +5166,15 @@ function blobDownload(blob, name) {
 }
 // A backup already built, waiting for a second tap: iPhone's share sheet needs a fresh tap if packing took a while.
 let backupCache = null;
-async function downloadBackup(withPhotos, say) {
-  let b = backupCache && Date.now() - backupCache.at < 120000 && backupCache.photos === withPhotos ? backupCache : null;
+async function downloadBackup(withPhotos, say, withFaces = false) {
+  let b = backupCache && Date.now() - backupCache.at < 120000 && backupCache.photos === withPhotos && backupCache.faces === withFaces ? backupCache : null;
   if (!b) {
     say("Packing everything up…");
-    b = { blob: new Blob([await buildBackup(withPhotos)], { type: "application/json" }), name: `winslow-backup-${easternDay()}.json`, at: Date.now(), photos: withPhotos };
+    b = { blob: new Blob([await buildBackup(withPhotos, withFaces)], { type: "application/json" }), name: `winslow-backup-${easternDay()}.json`, at: Date.now(), photos: withPhotos, faces: withFaces };
   }
   const size = sizeText(b.blob.size), done = how => {
     backupCache = null;
-    logEvent("state", `Backup ${how}: ${b.name} (${size}${withPhotos ? ", with photos" : ""})`);
+    logEvent("state", `Backup ${how}: ${b.name} (${size}${withPhotos ? ", with photos" : ""}${withFaces ? ", with known faces" : ""})`);
   };
   // iPhone: the share sheet can put it straight into Files, AirDrop or Mail.
   if (isIOS() && navigator.canShare && typeof File === "function") {
@@ -5161,7 +5194,7 @@ async function downloadBackup(withPhotos, say) {
 }
 const backupMsg = t => { $("backupMsg").textContent = t; };
 $("btnBackup").addEventListener("click", () => {
-  downloadBackup($("bPhotos").checked, backupMsg).catch(e => backupMsg("Couldn't make the backup: " + (e && (e.message || e.name))));
+  downloadBackup($("bPhotos").checked, backupMsg, $("bFaces").checked).catch(e => backupMsg("Couldn't make the backup: " + (e && (e.message || e.name))));
 });
 // "Back yourself up": Winslow offers the button in his reply (a download needs a tap).
 const BACKUP_RE = /\b(back (?:yourself|your ?self|your (?:memory|memories|brain|data|files)|it all|everything) up|back ?up (?:yourself|your (?:memory|memories|brain|data|files)|everything)|(?:make|take|download|save|do|create|run) (?:a |me a |another )?back ?up|export (?:your )?(?:memory|memories|brain|data))\b/i;
@@ -5228,7 +5261,10 @@ function cleanBackup(d) {
     .slice(-12).map(h => ({ role: h.role, content: scrub(h.content.slice(0, 4000)) })) : null;
   const notes = Array.isArray(chat.notes) ? chat.notes.filter(n => n && okTime(n.t) && typeof n.text === "string").slice(-NOTE_MAX)
     .map(n => ({ t: okTime(n.t), title: str(n.title, 80), text: n.text.slice(0, 8000), links: cleanLinks(n.links).slice(0, 5) })) : null;
-  return { exportedAt: str(d.exportedAt, 40), appVersion: str(d.appVersion, 20), memory, logs, files, history, notes,
+  // Known faces (only in backups made with "Include known faces"): null = the backup doesn't carry any.
+  const faces = Array.isArray(d.people) ? d.people.slice(0, PEOPLE_MAX).map(personRec).filter(Boolean)
+    .filter((p, i, a) => a.findIndex(o => o.id === p.id) === i) : null;
+  return { exportedAt: str(d.exportedAt, 40), appVersion: str(d.appVersion, 20), memory, logs, files, history, notes, people: faces,
     journal: arr(d.journal).map(journalEntry).filter(Boolean),
     settings: d.settings && typeof d.settings === "object" && !Array.isArray(d.settings) ? d.settings : {} };
 }
@@ -5271,6 +5307,7 @@ async function readRestore(file) {
   restoreBox.innerHTML = `<b>Backup from ${esc(when)}</b>${c.appVersion ? ` (Winslow ${esc(c.appVersion)})` : ""}<br>` +
     `${c.memory.length} memories · ${c.journal.length} journal entries · ${c.logs.length} log entries · ${c.files.length} shared files` +
     (c.files.length ? ` (${withData ? withData + " with contents" : "names and descriptions only"})` : "") +
+    (c.people ? ` · ${c.people.length} known face${c.people.length === 1 ? "" : "s"}` : "") +
     `<div class="row"><button class="primary" data-rs="merge">Merge</button><button class="danger" data-rs="replace">Replace everything</button>` +
     `<button data-rs="cancel">Cancel</button></div>` +
     `<small>Merge adds what's new and skips anything already here. Replace swaps everything for the backup (memory, journal, log, ` +
@@ -5289,12 +5326,18 @@ async function applyRestore(mode) {
   if (mode === "replace") {
     if (!confirm("Replace everything with this backup?\n\nWinslow's current memories, journal, activity log, shared files and settings will be swapped for the backup's. A backup of what's here now downloads first.")) return;
     backupMsg("First, saving a backup of what's here now…");
-    try { blobDownload(new Blob([await buildBackup(true)], { type: "application/json" }), `winslow-backup-${easternDay()}-before-restore.json`); }
+    // Known faces go into this safety copy only when the backup is about to replace them.
+    try { blobDownload(new Blob([await buildBackup(true, !!d.people)], { type: "application/json" }), `winslow-backup-${easternDay()}-before-restore.json`); }
     catch (e) { if (!confirm("I couldn't save a backup of the current data first. Replace everything anyway?")) { backupMsg("Restore cancelled."); return; } }
   }
   backupMsg("Restoring…");
-  await Promise.all([journalLoaded, filesLoaded]);
+  await Promise.all([journalLoaded, filesLoaded, peopleLoaded]);
   const merge = mode === "merge", key = (t, x) => t + "|" + x;
+  // Known faces: merge adds people not here already (by id or name); replace swaps them, but only
+  // when the backup carries faces at all. Otherwise the faces on this device are left alone.
+  const newPeople = !d.people ? [] : merge
+    ? d.people.filter(p => !people.some(o => o.id === p.id || o.name.toLowerCase() === p.name.toLowerCase())) : d.people;
+  const withPeople = !!d.people && !!logDb && logDb.objectStoreNames.contains("people");
   // Work out the result first; nothing is written until the storage transaction has gone through.
   const haveDays = new Set(merge ? journal.map(j => j.date) : []);
   const newJournal = d.journal.filter(j => !haveDays.has(j.date));
@@ -5304,15 +5347,17 @@ async function applyRestore(mode) {
   const allLogs = [...oldLogs, ...addLogs].sort((a, b) => a.t - b.t).slice(-LOG_MAX);   // kept in time order
   const newFiles = merge ? d.files.filter(f => !sharedFiles.some(o => o.id === f.id || key(o.t, o.name) === key(f.t, f.name))) : d.files;
   if (logDb) {
-    await idbTx(["journal", "events", "files", "fileData"], "readwrite", tx => {
+    await idbTx(["journal", "events", "files", "fileData", ...(withPeople ? ["people"] : [])], "readwrite", tx => {
       const js = tx.objectStore("journal"), es = tx.objectStore("events"), fs = tx.objectStore("files"), ds = tx.objectStore("fileData");
       if (!merge) { js.clear(); fs.clear(); ds.clear(); }
+      if (withPeople) { const ps = tx.objectStore("people"); if (!merge) ps.clear(); newPeople.forEach(p => ps.put(p)); }
       es.clear();                                        // the log is rewritten in time order either way
       newJournal.forEach(j => js.put(j));
       allLogs.forEach(ev => es.add(ev));
       newFiles.forEach(f => { fs.put(fileMeta(f)); if (f.data) ds.put({ id: f.id, data: f.data }); });
     });
   } else logMem = allLogs.slice();                       // no IndexedDB here: the log lives in memory for this visit
+  if (d.people && !withPeople) people = merge ? [...people, ...newPeople] : newPeople.slice();   // ...and so do the faces
   // Memory, settings, chat (localStorage).
   let added = 0;
   if (!merge) { brain.memory = []; applySettings(d.settings); if (d.history) brain.history = d.history; if (d.notes) brain.notes = d.notes; }
@@ -5330,8 +5375,8 @@ async function applyRestore(mode) {
   await reloadBrain(merge ? newJournal : d.journal);
   restoreData = null; restoreBox.hidden = true;
   const summary = merge
-    ? `Merged: ${added} new memories, ${newJournal.length} journal entries, ${addLogs.length} log entries, ${newFiles.length} shared files.`
-    : `Replaced: ${brain.memory.length} memories, ${journal.length} journal entries, ${allLogs.length} log entries, ${sharedFiles.length} shared files.`;
+    ? `Merged: ${added} new memories, ${newJournal.length} journal entries, ${addLogs.length} log entries, ${newFiles.length} shared files${d.people ? `, ${newPeople.length} known faces` : ""}.`
+    : `Replaced: ${brain.memory.length} memories, ${journal.length} journal entries, ${allLogs.length} log entries, ${sharedFiles.length} shared files${d.people ? `, ${newPeople.length} known faces` : ""}.`;
   logEvent("state", `Restored from a backup of ${d.exportedAt || "unknown date"}. ${summary}`);
   restoredGreeting(merge ? added : brain.memory.length, merge);
   if (brain.apiKey) { panel.classList.remove("open"); show(esc(summary)); }
@@ -5347,6 +5392,8 @@ async function reloadBrain(journalAdded) {
   if (logDb) {
     journal = (await idbAll("journal")).map(journalEntry).filter(Boolean).sort((a, b) => b.date.localeCompare(a.date));
     sharedFiles = (await idbAll("files")).map(fileMeta).sort((a, b) => b.t - a.t);
+    if (logDb.objectStoreNames.contains("people")) people = (await idbAll("people")).map(personRec).filter(Boolean).sort((a, b) => a.created - b.created);
+    recogReset();
   } else journal = [...journalAdded, ...journal].sort((a, b) => b.date.localeCompare(a.date));
   document.body.classList.toggle("debug", !!brain.debug);
   if (dashIsOpen()) dashSwitch(dashTab);
@@ -5367,6 +5414,438 @@ function restoredGreeting(n, merged) {
   const back = () => setTimeout(() => { if (mood === "happy") setMood("neutral"); }, 1500);
   if (speechUnlocked) speak(line, back); else silentSay(line, back);
 }
+
+/* =========================================================
+   15. KNOWN FACES: telling people apart (v6.4)
+   Face tracking (section 8) finds a face; this section works out whose it is.
+   A "face print" is 128 numbers from a recognition model that runs on this phone
+   (@vladmandic/face-api: tiny detector + tiny landmarks + recognition net, ~8 MB,
+   loaded only once someone has been introduced). Two prints of the same person are
+   close together (distance under MATCH_DIST); different people are further apart.
+   Prints, names and a small thumbnail live in IndexedDB (store "people") and never
+   go to the AI, which is only told the name. Not reliable enough to be a lock:
+   never use it to authorise anything.
+   ========================================================= */
+const FACEAPI_URL = "https://cdn.jsdelivr.net/npm/@vladmandic/face-api@1.7.15";
+const PEOPLE_MAX = 30, SAMPLES_MAX = 10;
+const ENROL_SAMPLES = 5, ENROL_MIN = 3, ENROL_MS = 14000;   // an introduction: 5 prints wanted, 3 will do, give up after 14 s
+const MATCH_DIST = 0.5;          // closer than this to a known print = that person
+const SURE_DIST = 0.38;          // this close and one look is enough; otherwise 2 of the last 3 looks must agree
+const FACE_GONE_MS = 3000;       // no face this long: whoever comes next is looked at afresh
+const RECOG_TRY_MS = 1000;       // while working out who it is: one look a second
+const RECOG_KNOWN_MS = 30000;    // once sure: check again every 30 s
+const RECOG_UNKNOWN_MS = 5000;   // a face he doesn't know: try again every 5 s (the light or angle may improve)
+const GREET_WAIT_MS = 4000;      // the "Good evening" waits this long for a name, then goes without one
+const IN_VIEW_MS = 5000;         // a face seen this recently counts as "in view"
+const FACE_ASK_MS = 60000;       // how long "What name shall I put to the face?" stays open
+
+let people = [];                 // [{ id, name, me, samples: [[128 numbers]], thumb, created, lastSeen }], oldest first
+let faceapi = null, recogLoading = null, recogErrors = 0;
+let lastSeenFace = null;         // { box, src, at }: the biggest face in the latest tracking frame
+let seenWho = null;              // { id, at }: who the face in view was decided to be (id null = unknown); null = not decided
+let recogVotes = [], recogBusy = false, recogNextAt = 0, recogGen = 0, recogMiss = 0, greetWait = 0;
+let enrolling = false;
+let pendingFace = null;          // { need: "name" | "confirm", name, me, at }: waiting for an answer
+
+const newPersonId = () => "p" + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+const personById = id => people.find(p => p.id === id);
+const personByName = n => people.find(p => p.name.toLowerCase() === String(n).toLowerCase());
+const isPrint = s => Array.isArray(s) && s.length === 128 && s.every(n => typeof n === "number" && Number.isFinite(n) && Math.abs(n) < 10);
+const cleanName = s => String(s || "").replace(/[^\p{L}\p{N} '.-]/gu, "").replace(/\s+/g, " ").trim().slice(0, 40);
+const nameCase = s => s.replace(/(^|[\s-])(\p{L})/gu, (m, a, b) => a + b.toUpperCase());
+// One person, rebuilt from scratch (storage or a backup): wrong types dropped, text capped, the thumbnail must be plain image data.
+function personRec(x) {
+  if (!x || typeof x !== "object") return null;
+  const name = cleanName(x.name);
+  const samples = Array.isArray(x.samples) ? x.samples.filter(isPrint).slice(0, SAMPLES_MAX).map(s => s.map(n => +n.toFixed(4))) : [];
+  if (!name || !samples.length) return null;
+  const p = { id: typeof x.id === "string" && /^p[a-z0-9]{3,24}$/.test(x.id) ? x.id : newPersonId(), name, me: x.me === true, samples,
+    created: okTime(x.created) || Date.now(), lastSeen: okTime(x.lastSeen) };
+  if (typeof x.thumb === "string" && x.thumb.length < 60000 && IMG_DATA_RE.test(x.thumb)) p.thumb = x.thumb;
+  return p;
+}
+const personOut = p => ({ id: p.id, name: p.name, me: p.me, samples: p.samples, created: p.created, lastSeen: p.lastSeen, ...(p.thumb ? { thumb: p.thumb } : {}) });
+const peopleLoaded = idbAll("people").then(list => {
+  const have = new Set(people.map(p => p.id));
+  people = [...people, ...list.map(personRec).filter(p => p && !have.has(p.id))].sort((a, b) => a.created - b.created);
+  if (dashIsOpen() && dashTab === "people") renderPeople();
+  if (people.length && brain.followFaces) loadRecog().catch(() => {});   // fetch the model now, so the first greeting has a name
+});
+function personPut(p) {
+  idbTx("people", "readwrite", tx => tx.objectStore("people").put(p))
+    .catch(e => logEvent("error", "Couldn't save a known face (it will be forgotten when the app closes): " + (e && (e.message || e.name))));
+}
+function personDel(id) {
+  const p = personById(id); if (!p) return null;
+  people = people.filter(x => x.id !== id);
+  idbTx("people", "readwrite", tx => tx.objectStore("people").delete(id)).catch(() => {});
+  logEvent("memory", `Forgot ${p.name}'s face`);
+  recogReset();
+  if (dashIsOpen() && dashTab === "people") renderPeople();
+  return p;
+}
+
+/* ----- The recognition model ----- */
+async function loadRecog() {
+  if (faceapi) return faceapi;
+  if (!recogLoading) recogLoading = (async () => {
+    const fa = await import(FACEAPI_URL + "/dist/face-api.esm.js");
+    const m = FACEAPI_URL + "/model";
+    if (fa.tf && fa.tf.ready) await fa.tf.ready();       // its bundled TensorFlow.js picks a backend (WebGL, else CPU)
+    await Promise.all([fa.nets.tinyFaceDetector.loadFromUri(m), fa.nets.faceLandmark68TinyNet.loadFromUri(m), fa.nets.faceRecognitionNet.loadFromUri(m)]);
+    return fa;
+  })();
+  try { faceapi = await recogLoading; return faceapi; }
+  catch (err) { recogLoading = null; throw err; }
+}
+// The face cut out of the frame as it is right now (square, with room around it), so the slow part can run on a copy.
+function cropFace(src, box) {
+  const side = Math.max(box.width, box.height) * 1.9;
+  const x = box.originX + box.width / 2 - side / 2, y = box.originY + box.height / 2 - side / 2;
+  const out = Math.round(clamp(side, 160, 320)), k = out / side;
+  const c = document.createElement("canvas");
+  c.width = c.height = out;
+  const g = c.getContext("2d");
+  g.fillStyle = "#000"; g.fillRect(0, 0, out, out);
+  // Only the part of the square that lies inside the frame (older iPhones draw nothing otherwise).
+  const x0 = Math.max(0, x), y0 = Math.max(0, y), x1 = Math.min(src.videoWidth, x + side), y1 = Math.min(src.videoHeight, y + side);
+  if (x1 > x0 && y1 > y0) g.drawImage(src, x0, y0, x1 - x0, y1 - y0, (x0 - x) * k, (y0 - y) * k, (x1 - x0) * k, (y1 - y0) * k);
+  return c;
+}
+// seen = { box, src } → { d: face print, score, canvas }, or null when no clear face was found in the cut-out.
+async function faceprint(seen) {
+  const c = cropFace(seen.src, seen.box);
+  const fa = await loadRecog();
+  const r = await fa.detectSingleFace(c, new fa.TinyFaceDetectorOptions({ inputSize: 224, scoreThreshold: 0.4 }))
+    .withFaceLandmarks(true).withFaceDescriptor();
+  return r ? { d: Array.from(r.descriptor, n => +n.toFixed(4)), score: r.detection.score, canvas: c } : null;
+}
+function printDist(a, b) { let s = 0; for (let i = 0; i < 128; i++) { const d = a[i] - b[i]; s += d * d; } return Math.sqrt(s); }
+// The nearest known person, if near enough: { p, dist }.
+function matchFace(d, list = people) {
+  let best = null;
+  for (const p of list) for (const s of p.samples) { const x = printDist(d, s); if (!best || x < best.dist) best = { p, dist: x }; }
+  return best && best.dist < MATCH_DIST ? best : null;
+}
+function thumbFrom(canvas) {
+  try {
+    const c = document.createElement("canvas"); c.width = c.height = 72;
+    c.getContext("2d").drawImage(canvas, 0, 0, 72, 72);
+    return c.toDataURL("image/jpeg", 0.7);
+  } catch { return ""; }
+}
+
+/* ----- Who is in view ----- */
+function recogReset() { recogGen++; seenWho = null; recogVotes = []; recogNextAt = 0; recogMiss = 0; }
+// Called for every tracked face (about 10 a second); looks properly only now and then.
+function recogSee() {
+  const now = Date.now();
+  if (greetWait && (seenWho || !people.length || now - greetWait > GREET_WAIT_MS)) {
+    greetWait = 0;
+    greetFace(!people.length ? undefined : (seenWho && seenWho.id && personById(seenWho.id)) || { unknown: true });
+  }
+  if (!people.length || enrolling || recogBusy || now < recogNextAt || !lastSeenFace || lastSeenFace.box.width < 40) return;
+  recogBusy = true;
+  const gen = recogGen;
+  faceprint(lastSeenFace).then(r => {
+    if (gen !== recogGen) return;                        // that face left while we were looking
+    if (!r) { recogNextAt = Date.now() + Math.min(8000, RECOG_TRY_MS * (1 + recogMiss++)); return; }   // no clear look: ease off
+    recogMiss = 0; recogNextAt = Date.now() + RECOG_TRY_MS;
+    const m = matchFace(r.d);
+    recogVotes = [...recogVotes, m ? m.p.id : ""].slice(-3);
+    const count = v => recogVotes.filter(x => x === v).length;
+    if (m && (m.dist < SURE_DIST || count(m.p.id) >= 2)) recogDecide(m.p.id);
+    else if (recogVotes.length === 3 && count("") >= 2) recogDecide(null);
+  }).catch(err => {
+    recogNextAt = Date.now() + 60000;                    // model didn't load (offline?): try again in a minute
+    if (!recogErrors++) logEvent("error", "Face recognition: " + (err && (err.message || err.name)));
+  }).finally(() => { recogBusy = false; });
+}
+function recogDecide(id) {
+  const was = seenWho;
+  seenWho = { id, at: Date.now() };
+  recogVotes = [];
+  recogNextAt = Date.now() + (id ? RECOG_KNOWN_MS : RECOG_UNKNOWN_MS);
+  if (was && was.id === id) return;                      // same as before: nothing to note
+  const p = id && personById(id);
+  if (p) { p.lastSeen = Date.now(); personPut(p); logEvent("saw", `Recognised ${p.name}`); }
+  else logEvent("saw", "A face I don't know is in view");
+  if (dashIsOpen() && dashTab === "people") renderPeople();
+}
+// A known person, { unknown: true }, or null (no face, not looking, or not sure yet).
+function whoInView() {
+  if (!people.length || !seenWho || !brain.followFaces || Date.now() - lastFaceAt > IN_VIEW_MS) return null;
+  return (seenWho.id && personById(seenWho.id)) || { unknown: true };
+}
+// One line for the AI: only ever a name, never the face print or a picture.
+function facePromptText() {
+  const w = whoInView();
+  if (!w) return "";
+  return w.unknown ? `\nFACES: your camera sees a face you do not recognise. It may be a guest, or your human in poor light or at an odd angle. Do not guess who it is.\n`
+    : w.me ? `\nFACES: you recognise the face in front of you as ${w.name}, your human.\n`
+    : `\nFACES: you recognise the face in front of you as ${w.name}, someone your human introduced to you (not your human). Speak to them by name rather than as "${addr()}".\n`;
+}
+function faceWhoText() {                                 // for the Senses tab, after "Yes"
+  const w = whoInView();
+  return !people.length ? ", I can see you" : !w ? ", working out who it is" : w.unknown ? ": someone I don't know" : `: ${w.name}`;
+}
+
+/* ----- Introductions and questions, by voice or typing ----- */
+// His reply to a face command, kept in the chat history like any other.
+function faceAnswer(userText, line, emo) {
+  brain.history.push({ role: "user", content: userText }, { role: "assistant", content: JSON.stringify({ say: line, emotion: emo || "neutral" }) });
+  brain.history = brain.history.slice(-12);
+  countChat(false); save();
+  if (emo) setMood(emo);
+  speak(line, () => {
+    setTimeout(() => setMood("neutral"), 1000);
+    // He asked something: outside conversation mode, open the mic for the answer.
+    if (pendingFace && !convo) setTimeout(() => { if (pendingFace && !listening && !busy) startListening(true); }, AFTER_SPEECH_MS + 50);
+  });
+}
+const NOT_NAMES = new Set(("me you him her them us it this that a an the my your not so very too really just great good bad nice fun cool awesome amazing " +
+  "terrible awful ridiculous boring hard easy weird strange crazy fine ok okay perfect wrong right true false what how why where when who all everything " +
+  "nothing something up later tomorrow today tonight now here there again face faces mine yours important impossible incredible fantastic wonderful " +
+  "brilliant lovely annoying stupid silly funny sad happy better worse best worst enough over done new old big small it's its for to of in on at and or but " +
+  "is are was be been why going").split(" "));
+const KIN = "friend|mate|buddy|pal|colleague|neighbou?r|brother|sister|son|daughter|wife|husband|partner|girlfriend|boyfriend|fianc[ée]e?|cousin|uncle|aunt|auntie|nephew|niece|boss|flatmate|roommate";
+// "my friend jack" → "Jack"; "my mum" → "Mum"; "ridiculous", "going well" → "" (not a name).
+function nameFrom(s) {
+  s = String(s || "").replace(new RegExp(`^my (?:(?:best|old|good|little|big|younger|older) )?(?:${KIN}) (?=\\S)`), "").replace(/^my /, "")
+    .replace(/\b(?:by the way|remember (?:him|her|them)|say hello|say hi)\b.*$/, "").trim();
+  const words = s.split(" ").filter(Boolean);
+  if (!words.length || words.length > 3 || words.some(w => w.length > 20 || NOT_NAMES.has(w) || /ing$/.test(w) || !/^[\p{L}][\p{L}'.-]*$/u.test(w))) return "";
+  return nameCase(cleanName(s));
+}
+const camForFaces = () => !!navigator.mediaDevices && !!navigator.mediaDevices.getUserMedia;
+
+function faceCommand(text) {
+  const a = addr(), nm = brain.name.toLowerCase().replace(/[^a-z0-9 ]/g, "").trim();
+  let t = text.toLowerCase().replace(/[’‘]/g, "'").replace(/[.!?,;:]/g, " ").replace(/\s+/g, " ").trim();
+  t = (nm ? t.split(nm).join(" ") : t).replace(/\b(please|would you|will you|could you|can you|hey|ok so|oh)\b/g, " ").replace(/\s+/g, " ").trim();
+  const say = (line, emo) => { faceAnswer(text, line, emo); return true; };
+  let m;
+
+  // 1. The answer to "What name shall I put to the face?" or "Shall I remember this face as Jack?"
+  if (pendingFace) {
+    const pf = pendingFace; pendingFace = null;
+    if (Date.now() - pf.at < FACE_ASK_MS) {
+      if (NO_RE.test(t)) return say(`Very good, ${a}. I shan't.`);
+      if (pf.need === "confirm" && YES_RE.test(t)) { startEnrol(text, pf.name, pf.me); return true; }
+      if (pf.need === "name") {
+        const n = nameFrom(t.replace(/^(?:(?:it|this|that|he|she)(?:'s| is)|i'?m|i am|my name(?:'s| is)|(?:his|her|their) name(?:'s| is)|call (?:me|him|her|them)|just|as)\s+/, ""));
+        if (n) { startEnrol(text, n, pf.me); return true; }
+      }
+    }
+  }
+  const asking = /^(?:do|did|don't|didn't|does|have) /.test(t);
+
+  // 2. "Forget Jack's face", "forget my face", "forget all the faces"
+  if ((m = t.match(/^(?:forget|delete|remove|erase) (.+)$/))) {
+    const what = m[1];
+    if (/^(?:all (?:the |of the |your )?(?:faces|people)(?: you know)?|every ?(?:one|body)(?:'s)? faces?)$/.test(what)) {
+      if (!people.length) return say(`There are none to forget, ${a}. I know no faces as yet.`);
+      const n = people.length;
+      people.slice().forEach(p => personDel(p.id));
+      return say(`Done, ${a}. I have forgotten ${n === 1 ? "the one face I knew" : `all ${n} faces`}.`);
+    }
+    let p = null, asked = false;
+    if (/^(?:my face|what i look like)$/.test(what)) { asked = true; p = people.find(x => x.me) || (w => w && !w.unknown ? w : null)(whoInView()); }
+    else if (/^(?:this|that|his|her|their) face$/.test(what)) { asked = true; p = (w => w && !w.unknown ? w : null)(whoInView()); }
+    else if ((m = what.match(/^(?:what )?(.+?)(?:'s|s')? (?:face|looks like)$/))) { asked = true; p = personByName(cleanName(m[1])); }
+    if (asked) {
+      if (!p) return say(people.length ? `I don't know that face, ${a}. The ones I know are on the People tab of my dashboard.` : `I know no faces as yet, ${a}, so there is nothing to forget.`);
+      personDel(p.id);
+      return say(`Forgotten, ${a}. I no longer know ${p.me ? "your" : p.name + "'s"} face.`);
+    }
+  }
+
+  // 3. "Whose faces do you know?"
+  if (/^(?:whose faces? do you know|which faces do you know|who can you recogni[sz]e|how many faces do you know|list (?:the )?(?:faces|people) you know)$/.test(t) ||
+      (people.length && /^who do you know$/.test(t))) {
+    if (!people.length) return say(`No one as yet, ${a}. Look at me and say "remember my face", and I shall begin with yours.`);
+    const names = people.map(p => p.me ? `you, ${a}` : p.name);
+    return say(`I know ${people.length === 1 ? "one face" : people.length + " faces"}: ${names.length > 1 ? names.slice(0, -1).join(", ") + " and " + names[names.length - 1] : names[0]}.`);
+  }
+
+  // 4. "That's not Jack, it's Sam": the face in view is learned under the right name.
+  if ((m = t.match(/^(?:no )?(?:that'?s|that is|this is|it'?s|it is|i'?m|i am) not (.+?) (?:that'?s|that is|this is|it'?s|it is|i'?m|i am) (.+)$/)) && personByName(cleanName(m[1]))) {
+    const n = nameFrom(m[2]);
+    if (n) { startEnrol(text, n, false); return true; }
+  }
+
+  // 5. "Do you recognise me?", "who am I?", "who is this?"
+  const explicit = /\b(?:do you |can't you |don't you )?(?:recogni[sz]e|remember) (?:me|my face|this face|this person|who i am|who this is)\b|\bdo you know (?:who i am|who this is|my face|this face)\b/.test(t) &&
+    (asking || /recogni[sz]e/.test(t));
+  const loose = /^who am i$|^who(?:'s| is) (?:this|that|here|in front of you)(?: person| man| woman| guy| lady)?$|^who (?:do|can) you see$/.test(t);
+  if (explicit || (loose && people.length && !previewOpen())) {
+    if (!people.length) return say(`I've not been introduced to any faces yet, ${a}. Look at me and say "remember my face", and I shall learn yours.`);
+    if (!brain.followFaces && !previewOpen()) return say(`My eyes are shut at present, ${a}: Follow faces is switched off in settings.`);
+    faceTest(text);
+    return true;
+  }
+
+  // 6. Introductions. "Remember my face (I'm Sean)", "remember this face as Mum", "remember Jack's face".
+  if (!asking && /\b(?:remember|learn|memori[sz]e|save|store) (?:my face|what i look like)\b/.test(t)) {
+    const mine = people.find(p => p.me);
+    const n = nameFrom(((t.match(/\b(?:i'?m|i am|my name(?:'s| is)|call me|as|it'?s) (.+)$/) || [])[1]) || "") || (mine && mine.name);
+    if (n) { startEnrol(text, n, true); return true; }
+    pendingFace = { need: "name", me: true, at: Date.now() };
+    return say(`With pleasure, ${a}. What name shall I put to the face?`);
+  }
+  if (!asking && /\b(?:remember|learn|memori[sz]e|save|store) (?:this|that|his|her|their|the) (?:face|person|man|woman|guy|lady)\b/.test(t)) {
+    const n = nameFrom(((t.match(/\b(?:as|(?:this|that|he|she|it)(?:'s| is)|(?:his|her|their) name(?:'s| is)|called|named) (.+)$/) || [])[1]) || "");
+    if (n) { startEnrol(text, n, false); return true; }
+    pendingFace = { need: "name", me: false, at: Date.now() };
+    return say(`Certainly, ${a}. And whose face is it?`);
+  }
+  if (!asking && (m = t.match(/^(?:remember|learn|memori[sz]e) (?:what )?(.+?)(?:'s|s')? (?:face|looks like)$/))) {
+    const n = nameFrom(m[1]);
+    if (n) { startEnrol(text, n, false); return true; }
+  }
+  // "This is Mum", "meet Jack": could be anything, so only with a face in view, and he checks first.
+  if ((m = t.match(/^(?:this is|meet|say hello to|say hi to|here is|here's) (.+)$/)) && (brain.followFaces || previewOpen()) && Date.now() - lastFaceAt < IN_VIEW_MS) {
+    const n = nameFrom(m[1]), w = whoInView();
+    if (n && !(w && !w.unknown && w.name.toLowerCase() === n.toLowerCase())) {
+      pendingFace = { need: "confirm", name: n, me: false, at: Date.now() };
+      return say(`Shall I remember this face as ${n}, ${a}?`);
+    }
+  }
+  return false;
+}
+
+// "Remember my face": a few looks from slightly different angles, kept as that person's prints.
+function startEnrol(userText, name, me) {
+  const a = addr();
+  const fail = line => faceAnswer(userText, line, "sad");
+  if (!camForFaces()) return fail(`I'm afraid this browser won't lend me a camera, ${a}, so I can't learn faces here.`);
+  if (!personByName(name) && people.length >= PEOPLE_MAX) return fail(`I know ${PEOPLE_MAX} faces already, ${a}, which is my limit. Someone will have to be forgotten first, on the People tab.`);
+  if (!brain.followFaces && !previewOpen()) {            // recognising anyone needs the face camera on from now on
+    brain.followFaces = true; save();
+    const box = document.getElementById("sFollow"); if (box) box.checked = true;
+    logEvent("state", "Follow faces switched on to learn a face");
+    startTracking();
+  }
+  busy = true; enrolling = true; hideDock();
+  brain.history.push({ role: "user", content: userText }); countChat(false);
+  setMood("neutral");
+  const first = me ? `Very good, ${a}. Look at me a moment, and turn your head a little.` : `Very good, ${a}. ${name}, look at me a moment, and turn your head a little.`;
+  const said = new Promise(res => speak(first, res));
+  (async () => {
+    let line, emo = "happy";
+    try {
+      const got = [];
+      let thumb = "";
+      const until = Date.now() + ENROL_MS;
+      while (got.length < ENROL_SAMPLES && Date.now() < until) {
+        await sleep(350); poke();
+        const seen = lastSeenFace;
+        if (!seen || Date.now() - seen.at > 500 || seen.box.width < 50) continue;   // no face just now, or too far away
+        const r = await faceprint(seen);
+        if (!r || r.score < 0.5) continue;
+        if (got.length && printDist(r.d, got[0]) > MATCH_DIST) continue;             // a blurred frame, or someone else leaned in
+        got.push(r.d);
+        if (!thumb) thumb = thumbFrom(r.canvas);
+        show(`Learning ${me ? "your" : esc(name) + "'s"} face… ${got.length} of ${ENROL_SAMPLES}`);
+      }
+      if (got.length < ENROL_MIN) {
+        emo = "sad";
+        line = Date.now() - lastFaceAt > 3000 ? `I couldn't find a face to learn, ${a}. Sit where my camera can see you and ask me again.`
+          : `I couldn't get a clear enough look, ${a}. Better light and a little closer, and ask me again.`;
+      } else {
+        const twin = matchFace(got[0], people.filter(p => p.name.toLowerCase() !== name.toLowerCase()));
+        let p = personByName(name);
+        const again = !!p, now = Date.now();
+        if (p) { p.samples = [...got, ...p.samples].slice(0, SAMPLES_MAX); if (me) p.me = true; if (thumb) p.thumb = thumb; p.lastSeen = now; }
+        else { p = { id: newPersonId(), name, me: !!me, samples: got, created: now, lastSeen: now, ...(thumb ? { thumb } : {}) }; people.push(p); }
+        if (p.me) people.forEach(o => { if (o !== p && o.me) { o.me = false; personPut(o); } });   // only one "my human"
+        personPut(p);
+        recogReset(); seenWho = { id: p.id, at: now }; recogNextAt = now + RECOG_KNOWN_MS;
+        logEvent("memory", `${again ? "Took a fresh look at" : "Learned"} ${p.name}'s face (${got.length} looks, ${p.samples.length} kept)`);
+        line = p.me ? pick([`Thank you, ${a}. I should know you anywhere now.`, `Committed to memory, ${a}. A face I shall not forget.`])
+          : pick([`Very good. I shall remember you, ${p.name}.`, `A pleasure, ${p.name}. I shall know you next time.`]);
+        if (twin) line += ` I should mention, ${a}, that this face looks rather like ${twin.p.me ? "yours" : twin.p.name + "'s"} to me, so I may confuse the two.`;
+        if (dashIsOpen() && dashTab === "people") renderPeople();
+      }
+    } catch (err) {
+      emo = "sad";
+      logEvent("error", "Learning a face: " + (err && (err.message || err.name)));
+      line = `I couldn't load my face-recognition model, ${a}. It needs the internet the first time. Do try again shortly.`;
+    }
+    await said;                                          // never talk over his own first line
+    enrolling = false; busy = false;
+    brain.history.push({ role: "assistant", content: JSON.stringify({ say: line, emotion: emo }) });
+    brain.history = brain.history.slice(-12); save();
+    setMood(emo);
+    speak(line, () => setTimeout(() => { if (mood === emo) setMood("neutral"); }, 1200));
+  })();
+}
+
+// "Do you recognise me?": a fresh look, right now.
+async function faceTest(userText) {
+  const a = addr();
+  busy = true; setMood("thinking");
+  let line, emo = "neutral";
+  try {
+    let found = null, looked = 0;
+    const until = Date.now() + 6000;
+    while (!found && looked < 3 && Date.now() < until) {
+      const seen = lastSeenFace;
+      if (seen && Date.now() - seen.at < 500) {
+        const r = await faceprint(seen);
+        if (r) { looked++; found = matchFace(r.d); }
+      }
+      if (!found) await sleep(300);
+    }
+    if (found) {
+      recogDecide(found.p.id);
+      emo = "happy";
+      line = found.p.me ? pick([`You are ${found.p.name}, ${a}. I would know that face anywhere.`, `${found.p.name}, ${a}, unless my eyes deceive me. They rarely do.`])
+        : pick([`That is ${found.p.name}, unless my eyes deceive me.`, `${found.p.name}, I believe. Good to see you.`]);
+    } else if (looked) {
+      line = `I'm afraid I don't know this face, ${a}. Say "remember this face" and tell me the name, and I shall.`;
+    } else {
+      line = `I can't see a face clearly just now, ${a}. A little closer, or better light, and ask me again.`;
+    }
+  } catch (err) {
+    emo = "sad";
+    logEvent("error", "Face recognition: " + (err && (err.message || err.name)));
+    line = `I couldn't load my face-recognition model, ${a}. It needs the internet the first time.`;
+  }
+  busy = false;
+  faceAnswer(userText, line, emo);
+}
+
+/* ----- Dashboard: People tab ----- */
+function renderPeople() {
+  const w = whoInView();
+  $("peopleList").innerHTML = people.length ? people.map(p =>
+    `<div class="fcard pcard">${p.thumb ? `<img class="fthumb" src="${esc(p.thumb)}" alt="">` : `<span class="fdoc">${esc(p.name.charAt(0).toUpperCase())}</span>`}` +
+    `<div class="finfo">${esc(p.name)}${p.me ? `<span class="pme">my human</span>` : ""}` +
+    `<small>${p.samples.length} face print${p.samples.length === 1 ? "" : "s"} · ${w && w.id === p.id ? "in view now" : p.lastSeen ? "last seen " + esc(agoText(p.lastSeen)) : "not seen yet"}</small>` +
+    `<div class="pbtns"><button class="note-copy" data-pren="${esc(p.id)}">Rename</button>` +
+    `<button class="note-copy" data-pme="${esc(p.id)}">${p.me ? "Not my human" : "This is me"}</button>` +
+    `<button class="note-copy" data-pdel="${esc(p.id)}" aria-label="Forget ${esc(p.name)}'s face">Forget</button></div></div></div>`).join("")
+    : `<p class="dash-empty">I don't know any faces yet. Look at me and say "remember my face".</p>`;
+}
+$("peopleList").addEventListener("click", e => {
+  const b = e.target.closest("button"); if (!b) return;
+  poke();
+  const p = personById(b.dataset.pren || b.dataset.pme || b.dataset.pdel); if (!p) return;
+  if (b.dataset.pdel) { if (confirm(`Forget ${p.name}'s face? Winslow keeps any memories about them.`)) personDel(p.id); return; }
+  if (b.dataset.pme) {
+    const on = !p.me;
+    people.forEach(o => { if (o.me && o !== p) { o.me = false; personPut(o); } });
+    p.me = on; personPut(p);
+  } else {
+    const n = nameCase(cleanName(prompt("Name for this face:", p.name) || ""));
+    if (!n || n === p.name) return;
+    if (personByName(n) && personByName(n) !== p) { alert(`I already know a face called ${n}.`); return; }
+    logEvent("memory", `Renamed ${p.name}'s face to ${n}`);
+    p.name = n; personPut(p);
+  }
+  renderPeople();
+});
 
 // First launch only: a short hint, then never again.
 if (!brain.hintShown) {
