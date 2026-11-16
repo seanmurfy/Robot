@@ -803,7 +803,7 @@
       <small>Tap his face while he is talking and he stops, quietly. With Wake word on, your voice stops him too:
         "stop" or "cancel" drops the matter (he forgets the question and his answer, and the microphone stays shut);
         "Winslow" or "wait" stops him and he listens for what you want next. He ignores those words when he
-        is the one saying them. Switch this off if he keeps cutting himself short, or if his voice sounds worse.</small>
+        is the one saying them. Your voice has to carry over his, so speak up, or tap. Switch this off if he keeps cutting himself short.</small>
 
       <label for="sSense">Listening sensitivity: <span id="senseVal"></span></label>
       <input type="range" id="sSense" min="0" max="2" step="1">
@@ -918,7 +918,7 @@
    1. STORAGE: everything the robot knows lives in one object,
       saved in this browser's localStorage (on the phone).
    ========================================================= */
-const APP_VERSION = "v6.6";         // keep version.json in step with this
+const APP_VERSION = "v6.7";         // keep version.json in step with this
 // iPhone bug: after rotating, fixed buttons can be drawn in one place but tappable in another.
 // Snapping the page back to the top re-syncs them.
 function resyncLayout() {
@@ -2783,7 +2783,6 @@ $("btnSave").addEventListener("click", () => {
   setTimeout(() => setMood("neutral"), 1500);
   if (brain.wakeWord && !wakeWas) wakeStart();           // section 16 (after "Settings saved." so its caption shows)
   if (!brain.wakeWord && wakeWas) wakeRelease();
-  else if (bargeOn() !== bargeWas) wakeRelease();        // reopened within a second with the right echo setting
 });
 $("btnSetupLink").addEventListener("click", async () => {
   if (!brain.apiKey) { $("settingsMsg").textContent = "Enter and save your API key first."; return; }
@@ -6030,10 +6029,10 @@ async function wakeOpen() {
     }
     await loadWakeModel();
     if (gen !== wakeGen || !wakeWanted()) return;
-    // Echo cancelling takes his own voice out of what the microphone hears, which interruptions need. On Android it
-    // can put the phone's sound in "call" mode, so it is only asked for when interruptions are switched on.
+    // No echo cancelling, ever: on the Pixel it put the phone's sound in "call" mode and made his voice very quiet
+    // (v6.6). The cost is that his own voice is in what the microphone hears while he talks.
     const stream = await navigator.mediaDevices.getUserMedia({
-      audio: { echoCancellation: bargeOn(), noiseSuppression: true, autoGainControl: true, channelCount: 1 }, video: false
+      audio: { echoCancellation: false, noiseSuppression: true, autoGainControl: true, channelCount: 1 }, video: false
     });
     if (gen !== wakeGen || !wakeWanted()) { stream.getTracks().forEach(t => t.stop()); return; }
     if (!wakeCtx) wakeCtx = new (window.AudioContext || window.webkitAudioContext)();
