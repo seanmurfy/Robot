@@ -19,6 +19,7 @@ self.addEventListener("fetch", (e) => {
   const url = new URL(req.url);
   if (url.origin !== self.location.origin) return;            // APIs, CDNs: untouched
   if (url.pathname.endsWith("/version.json")) return;         // update check always goes to the network
+  if (url.pathname.includes("/models/")) return;              // the 40 MB wake-word model: the app keeps its own copy in IndexedDB
   const nav = req.mode === "navigate";
   // Pages are stored under one key, so ?v=…&t=… reload URLs don't pile up.
   const key = nav ? new URL("./", self.registration.scope).href : url.origin + url.pathname;

@@ -793,6 +793,12 @@
       <small>Winslow only acts on sentences that include his name (or something that sounds very like it), such as
         "Winslow, what time is it". Everything else is ignored. For rooms with a television or other people talking.</small>
 
+      <label class="check"><input type="checkbox" id="sWake"> Wake word</label>
+      <small>Say "Winslow" (his name) instead of tapping his face: it wakes him if he's asleep, then he listens. Say the
+        name, wait for "Listening…", then speak. The microphone stays on while he's on screen, but the listening for his
+        name happens on this phone and no sound leaves it. The first time, it downloads about 40 MB. Uses more battery.
+        He still needs one tap after each launch before he can speak aloud.</small>
+
       <label for="sSense">Listening sensitivity: <span id="senseVal"></span></label>
       <input type="range" id="sSense" min="0" max="2" step="1">
       <small>How sure Winslow must be before acting on what he hears. Strict ignores more background sound but may
@@ -904,7 +910,7 @@
    1. STORAGE: everything the robot knows lives in one object,
       saved in this browser's localStorage (on the phone).
    ========================================================= */
-const APP_VERSION = "v6.4";         // keep version.json in step with this
+const APP_VERSION = "v6.5";         // keep version.json in step with this
 // iPhone bug: after rotating, fixed buttons can be drawn in one place but tappable in another.
 // Snapping the page back to the top re-syncs them.
 function resyncLayout() {
@@ -939,6 +945,7 @@ const DEFAULTS = {
   sleepAfter: 2,     // minutes idle before getting sleepy; 0 = never
   followFaces: false,
   faceGate: true,    // "Only listen when I'm in view" (only applies while Follow faces is on)
+  wakeWord: false,   // "Wake word": listen for the name on this phone instead of waiting for a tap (section 16)
   noisy: false,      // "Noisy room mode": act only on sentences that contain the robot's name
   sensitivity: "normal",   // "Listening sensitivity": "strict" | "normal" | "relaxed" (LISTEN_LEVELS)
   debug: false,      // show version + sleep timer bottom-left
@@ -1638,6 +1645,7 @@ function startListening(auto = false) {
   openMic(auto);
 }
 function openMic(auto) {
+  wakeRelease();                                         // the wake word's microphone stream must be closed first (section 16)
   rec = new SR();
   rec.lang = "en-US";
   rec.interimResults = true;
@@ -2594,6 +2602,7 @@ function openSettings() {
   $("sFollow").checked = !!brain.followFaces;
   $("sFaceGate").checked = brain.faceGate !== false;
   $("sNoisy").checked = !!brain.noisy;
+  $("sWake").checked = !!brain.wakeWord;
   $("sSense").value = LISTEN_ORDER.indexOf(listenKey());
   $("sConvo").checked = brain.convo !== false;
   $("sWeb").checked = brain.webSearch !== false;
@@ -2707,6 +2716,8 @@ $("btnSave").addEventListener("click", () => {
   brain.faceGate = $("sFaceGate").checked;
   brain.noisy = $("sNoisy").checked;
   brain.sensitivity = LISTEN_ORDER[+$("sSense").value] || "normal";
+  const wakeWas = !!brain.wakeWord;
+  brain.wakeWord = $("sWake").checked;
   save();
   if (brain.followFaces && !followWas) startTracking();
   if (!brain.followFaces && followWas) stopTracking();
@@ -2715,6 +2726,8 @@ $("btnSave").addEventListener("click", () => {
   panel.classList.remove("open");
   setMood("happy"); show("Settings saved.");
   setTimeout(() => setMood("neutral"), 1500);
+  if (brain.wakeWord && !wakeWas) wakeStart();           // section 16 (after "Settings saved." so its caption shows)
+  if (!brain.wakeWord && wakeWas) wakeRelease();
 });
 $("btnSetupLink").addEventListener("click", async () => {
   if (!brain.apiKey) { $("settingsMsg").textContent = "Enter and save your API key first."; return; }
@@ -3636,6 +3649,7 @@ function renderStatus() {
     ["Listening", `${listenLevel().label} sensitivity` +
       (brain.faceGate !== false && brain.followFaces ? (faceGateOn() ? ", only when you're in view" : ", in-view check paused (no face camera just now)") : "") +
       (brain.noisy ? `, noisy room mode (say "${brain.name}")` : "")],
+    ["Wake word", wakeStatusText()],
     ["Known faces", !people.length ? `None yet (say "remember my face")`
       : `${people.length}: ${people.map(p => p.name).join(", ")}` + (brain.followFaces ? "" : " (Follow faces is off, so I'm not looking)")],
     ["Web search", !brain.apiKey ?"Needs an API key" : searchOn() ? `On: ${SEARCH_ENGINES[engineNow()]}, 1 search per reply, 3 results` : searchBroken ? "Not available with this model" : "Off"],
@@ -5846,6 +5860,212 @@ $("peopleList").addEventListener("click", e => {
   }
   renderPeople();
 });
+
+/* =========================================================
+   16. WAKE WORD: hearing his name instead of a tap (v6.5)
+   "Wake word" setting (brain.wakeWord, off by default, stays on this device).
+   A small speech model (Vosk, WebAssembly, in a worker) listens on a plain
+   microphone stream for the robot's name and nothing else; the sound never
+   leaves the phone. Hearing the name does what a face tap does: wakes him if
+   he is asleep, then opens the usual listening. The browser's own speech
+   recognition can't share the microphone on Android, so the wake stream is
+   let go before every listen (wakeRelease() in openMic()) and wakeTick()
+   takes it back once listening and conversation mode are over.
+   ========================================================= */
+const VOSK_URL = "https://cdn.jsdelivr.net/npm/vosk-browser@0.0.8/dist/vosk.js";
+const VOSK_SRI = "sha384-nqyY8clHf93uBYFkgkACShMTuvE3U57yXSJaf0Ws+XgzcoUe6OB/1BiOfHqKOWeg";   // the script is refused if it ever differs
+const WAKE_MODEL = "models/vosk-model-small-en-us-0.15.tar.gz";   // official Vosk small English model, served from this site
+const WAKE_CONF = 0.8;               // how sure the model must be that it heard the name
+const WAKE_COOLDOWN_MS = 3000;       // one wake per this long
+const WAKE_HANDOVER_MS = 250;        // gap between letting the mic go and the browser's recognition taking it
+const WAKE_QUIET_RMS = 0.004;        // below this the room counts as silent
+const WAKE_TAIL_MS = 1500;           // keep feeding the model this long after the last sound (so it can finish a word), then rest
+const WAKE_MAX_FAILS = 5;
+// Words that sound like part of "Winslow". Without them the model hears the name in "Winston" or "he wins slowly".
+const WAKE_DECOYS = ["winston", "window", "windows", "wins", "win", "wind", "winter", "winner", "slow", "slowly", "low", "lot", "a", "when", "went", "he", "hey"];
+let wakeModel = null, wakeModelLoading = null, wakeRecog = null, wakeRecogKey = "";
+let wakeStream = null, wakeCtx = null, wakeSrc = null, wakeNode = null, wakeMute = null, wakePrev = null;
+let wakeOpening = false, wakeGen = 0, wakeLastAt = 0, wakeLoudAt = 0, wakeHoldUntil = 0, wakeRetryAt = 0, wakeFails = 0, wakeAnnounce = false;
+
+const wakeName = () => plainWords(brain.name).replace(/'/g, "") || "winslow";
+function wakeWanted() {
+  return !!brain.wakeWord && !document.hidden && !listening && !rec && !convo && Date.now() >= wakeHoldUntil;
+}
+function loadVoskLib() {
+  return new Promise((res, rej) => {
+    if (window.Vosk) { res(); return; }
+    const s = document.createElement("script");
+    s.src = VOSK_URL; s.integrity = VOSK_SRI; s.crossOrigin = "anonymous";
+    s.onload = () => window.Vosk ? res() : rej(new Error("vosk missing"));
+    s.onerror = () => { s.remove(); rej(new Error("vosk script failed")); };
+    document.head.appendChild(s);
+  });
+}
+// The model (about 40 MB) is downloaded once; the library then keeps it in IndexedDB on the phone.
+function loadWakeModel() {
+  if (wakeModel) return Promise.resolve(wakeModel);
+  if (!wakeModelLoading) wakeModelLoading = (async () => {
+    await loadVoskLib();
+    // Absolute address: the library's worker would otherwise resolve it against the site root.
+    const m = new Vosk.Model(new URL(WAKE_MODEL, location.href).href, -1);
+    try {
+      await new Promise((res, rej) => {
+        const t = setTimeout(() => rej(new Error("model timed out")), 240000);
+        m.on("load", msg => { clearTimeout(t); msg && msg.result ? res() : rej(new Error("model load failed")); });
+        m.on("error", msg => { clearTimeout(t); rej(new Error((msg && msg.error) || "model error")); });
+      });
+    } catch (err) { try { m.terminate(); } catch {} throw err; }
+    wakeModel = m;
+    return m;
+  })().catch(err => { wakeModelLoading = null; err.wakeModel = true; throw err; });
+  return wakeModelLoading;
+}
+function wakeRecognizer(rate) {
+  const name = wakeName(), key = name + "@" + rate;
+  if (wakeRecog && wakeRecogKey === key) return;
+  if (wakeRecog) try { wakeRecog.remove(); } catch {}
+  // The grammar is the name, a few sound-alikes to catch near misses (so "Winston" isn't forced into "Winslow"),
+  // and "[unk]", which soaks up every other word.
+  const decoys = WAKE_DECOYS.filter(w => !name.split(" ").includes(w));
+  wakeRecog = new wakeModel.KaldiRecognizer(rate, JSON.stringify([name, "hey " + name, "wake up", ...decoys, "[unk]"]));
+  wakeRecog.setWords(true);
+  wakeRecog.on("result", m => wakeResult(m && m.result));
+  wakeRecogKey = key;
+}
+async function wakeOpen() {
+  if (wakeOpening || wakeStream) return;
+  wakeOpening = true;
+  const gen = ++wakeGen;
+  try {
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia || !window.WebAssembly) {
+      const e = new Error("no mic api"); e.name = "NoMicAPI"; throw e;
+    }
+    await loadWakeModel();
+    if (gen !== wakeGen || !wakeWanted()) return;
+    // No echo cancelling: on Android it puts the phone's sound in "call" mode, and his own voice is skipped below anyway.
+    const stream = await navigator.mediaDevices.getUserMedia({
+      audio: { echoCancellation: false, noiseSuppression: true, autoGainControl: true, channelCount: 1 }, video: false
+    });
+    if (gen !== wakeGen || !wakeWanted()) { stream.getTracks().forEach(t => t.stop()); return; }
+    if (!wakeCtx) wakeCtx = new (window.AudioContext || window.webkitAudioContext)();
+    if (wakeCtx.state !== "running") await wakeCtx.resume().catch(() => {});
+    if (gen !== wakeGen || !wakeWanted()) { stream.getTracks().forEach(t => t.stop()); return; }
+    wakeRecognizer(wakeCtx.sampleRate);
+    wakeStream = stream;
+    wakeSrc = wakeCtx.createMediaStreamSource(stream);
+    wakeNode = wakeCtx.createScriptProcessor(4096, 1, 1);
+    wakeMute = wakeCtx.createGain(); wakeMute.gain.value = 0;        // the node only runs when wired to an output: a silent one
+    wakeNode.onaudioprocess = wakeAudio;
+    wakeSrc.connect(wakeNode); wakeNode.connect(wakeMute); wakeMute.connect(wakeCtx.destination);
+    wakeFails = 0; wakeLoudAt = 0; wakePrev = null;
+    if (wakeAnnounce) { wakeAnnounce = false; show(esc(`Very good. Say "${brain.name}" when you want me.`)); }
+  } catch (err) { wakeFailed(err); }
+  finally { wakeOpening = false; }
+}
+// Let the microphone go (the model stays loaded). Called before every listen, and when the page is hidden.
+function wakeRelease() {
+  wakeGen++;
+  if (wakeNode) { wakeNode.onaudioprocess = null; try { wakeNode.disconnect(); } catch {} }
+  if (wakeSrc) try { wakeSrc.disconnect(); } catch {}
+  if (wakeMute) try { wakeMute.disconnect(); } catch {}
+  wakeNode = wakeSrc = wakeMute = wakePrev = null;
+  if (wakeStream) wakeStream.getTracks().forEach(t => t.stop());
+  wakeStream = null; wakeLoudAt = 0;
+  if (wakeCtx && wakeCtx.state === "running") wakeCtx.suspend().catch(() => {});
+}
+function wakeFailed(err) {
+  wakeRelease();
+  const blocked = err && (err.name === "NotAllowedError" || err.name === "SecurityError");
+  const fatal = blocked || (err && (err.wakeModel || err.name === "NoMicAPI"));
+  if (!fatal && ++wakeFails < WAKE_MAX_FAILS) { wakeRetryAt = Date.now() + 10000; return; }   // mic busy for a moment: try again shortly
+  brain.wakeWord = false; save(); wakeFails = 0; wakeAnnounce = false;
+  const box = document.getElementById("sWake"); if (box) box.checked = false;
+  const msg = blocked ? "Microphone blocked, so I turned the wake word off."
+    : err && err.wakeModel ? "Couldn't load my ear for my name (internet?), so I turned the wake word off."
+    : "Couldn't keep the microphone open, so I turned the wake word off.";
+  logEvent("error", msg + (err && err.message ? ` (${err.message})` : ""));
+  setMood("sad"); show(msg);
+  setTimeout(() => setMood("neutral"), 2000);
+}
+// Each chunk of sound (about 85 ms). Skipped while he is talking or a timer is chiming; a silent room rests the model.
+function wakeAudio(e) {
+  if (!wakeRecog || !wakeStream) return;
+  const now = Date.now();
+  if ((isSpeaking() && now >= silentUntil) || now - speechEndedAt < 600 || ringing.length) { wakeLoudAt = 0; wakePrev = null; return; }
+  const d = e.inputBuffer.getChannelData(0);
+  let sum = 0, n = 0;
+  for (let i = 0; i < d.length; i += 4) { sum += d[i] * d[i]; n++; }
+  const wasResting = now - wakeLoudAt > WAKE_TAIL_MS;
+  if (Math.sqrt(sum / n) >= WAKE_QUIET_RMS) wakeLoudAt = now;
+  try {
+    if (now - wakeLoudAt > WAKE_TAIL_MS) { wakePrev = new Float32Array(d); return; }   // resting: keep one chunk so a word's first sound isn't lost
+    if (wasResting && wakePrev) wakeRecog.acceptWaveformFloat(wakePrev, e.inputBuffer.sampleRate);
+    wakePrev = null;
+    wakeRecog.acceptWaveform(e.inputBuffer);
+  } catch {}
+}
+function wakeResult(r) {
+  if (!r || !r.text) return;
+  const name = wakeName().split(" ");
+  const words = Array.isArray(r.result) && r.result.length ? r.result : r.text.split(" ").map(w => ({ word: w, conf: 1 }));
+  let best = -1;
+  for (let i = 0; i + name.length <= words.length; i++) {
+    if (!name.every((w, j) => words[i + j].word === w)) continue;
+    // Straight after a sound-alike ("he wins a lot" heard as "he winslow") it is most likely a slip, not a call.
+    const before = i ? words[i - 1].word : "";
+    if (before !== "hey" && WAKE_DECOYS.includes(before)) continue;
+    best = Math.max(best, Math.min(...name.map((_, j) => Number(words[i + j].conf) || 0)));
+  }
+  if (best < 0) return;
+  if (best < WAKE_CONF) {
+    if (brain.debug) logEvent("ignored", `Wake word: perhaps heard "${brain.name}", but not sure enough (${best.toFixed(2)})`);
+    return;
+  }
+  wakeHeard();
+}
+function wakeHeard() {
+  const now = Date.now();
+  if (!brain.wakeWord || document.hidden || now - wakeLastAt < WAKE_COOLDOWN_MS) return;
+  if (listening || rec || convo || ringing.length || waking) return;
+  const asleep = sleepState !== "awake";
+  if (!asleep && (busy || isSpeaking() || panel.classList.contains("open") || document.activeElement === typed)) return;
+  wakeLastAt = now;
+  poke(); notePresence("talk"); touchEndsDream();
+  logEvent("heard", `"${brain.name}" (wake word)`);
+  // The same as a tap on the face, minus the tap.
+  const listen = () => {
+    if (document.hidden || listening || rec || convo || busy || ringing.length || panel.classList.contains("open")) return;
+    wakeHoldUntil = Date.now() + 2000;
+    wakeRelease();
+    convo = brain.convo !== false; convoSilent = 0; convoIgnored = 0;
+    if (convo) micBtn.classList.add("convo");
+    setTimeout(() => { if (!listening && !rec && !document.hidden) startListening(true); }, WAKE_HANDOVER_MS);
+  };
+  if (asleep) { wake(listen); return; }                  // the wake-up line first, then he listens
+  chirp();
+  listen();
+}
+// Once a second: hold the microphone when the wake word should be listening, let it go when it shouldn't.
+function wakeTick() {
+  if (!wakeWanted()) { if (wakeStream) wakeRelease(); return; }
+  if (wakeStream) { if (wakeCtx && wakeCtx.state === "suspended") wakeCtx.resume().catch(() => {}); return; }
+  if (!wakeOpening && Date.now() >= wakeRetryAt) wakeOpen();
+}
+function wakeStatusText() {
+  if (!brain.wakeWord) return "Off";
+  if (wakeStream) return `Listening for "${brain.name}" (on this phone only)`;
+  if (!wakeModel) return "Loading";
+  return listening || rec || convo ? "Paused while we talk" : "Paused";
+}
+// Switched on in settings: say what is happening, since the first load is a 40 MB download.
+function wakeStart() {
+  wakeAnnounce = true; wakeFails = 0; wakeRetryAt = 0;
+  if (!wakeModel) show("Fetching my ear for my name… (about 40 MB, the first time only)");
+  wakeTick();
+}
+setInterval(wakeTick, 1000);
+document.addEventListener("visibilitychange", () => { if (document.hidden) wakeRelease(); });
+window.addEventListener("pagehide", wakeRelease);
 
 // First launch only: a short hint, then never again.
 if (!brain.hintShown) {
