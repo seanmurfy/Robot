@@ -799,10 +799,18 @@
         name happens on this phone and no sound leaves it. The first time, it downloads about 40 MB. Uses more battery.
         He still needs one tap after each launch before he can speak aloud.</small>
 
+      <label class="check"><input type="checkbox" id="sBarge"> Let me interrupt him</label>
+      <small>Tap his face while he is talking and he stops, quietly. With Wake word on, your voice stops him too:
+        "stop" or "cancel" drops the matter (he forgets the question and his answer, and the microphone stays shut);
+        "Winslow" or "wait" stops him and he listens for what you want next. He ignores those words when he
+        is the one saying them. Switch this off if he keeps cutting himself short, or if his voice sounds worse.</small>
+
       <label for="sSense">Listening sensitivity: <span id="senseVal"></span></label>
       <input type="range" id="sSense" min="0" max="2" step="1">
       <small>How sure Winslow must be before acting on what he hears. Strict ignores more background sound but may
-        miss you; Relaxed accepts single words and fainter speech. With "Show debug info" on, ignored sound shows as
+        miss you; Relaxed accepts single words and fainter speech. For the wake word: on Strict his name must be said
+        entirely on its own, with a pause before and after; Normal allows one more word after it; Relaxed allows it
+        at the start of a sentence. With "Show debug info" on, ignored sound shows as
         a faint "(ignored background sound)", and every one is in the dashboard log.</small>
 
       <label for="sSleep">Sleep after</label>
@@ -910,7 +918,7 @@
    1. STORAGE: everything the robot knows lives in one object,
       saved in this browser's localStorage (on the phone).
    ========================================================= */
-const APP_VERSION = "v6.5";         // keep version.json in step with this
+const APP_VERSION = "v6.6";         // keep version.json in step with this
 // iPhone bug: after rotating, fixed buttons can be drawn in one place but tappable in another.
 // Snapping the page back to the top re-syncs them.
 function resyncLayout() {
@@ -945,6 +953,7 @@ const DEFAULTS = {
   sleepAfter: 2,     // minutes idle before getting sleepy; 0 = never
   followFaces: false,
   faceGate: true,    // "Only listen when I'm in view" (only applies while Follow faces is on)
+  bargeIn: true,     // "Let me interrupt him": a tap, or (with Wake word) his name / stop / cancel / wait, cuts his speech
   wakeWord: false,   // "Wake word": listen for the name on this phone instead of waiting for a tap (section 16)
   noisy: false,      // "Noisy room mode": act only on sentences that contain the robot's name
   sensitivity: "normal",   // "Listening sensitivity": "strict" | "normal" | "relaxed" (LISTEN_LEVELS)
@@ -1399,6 +1408,7 @@ if ("speechSynthesis" in window) speechSynthesis.getVoices();   // start loading
 
 /* ---------- Words at the mouth: shown a sentence at a time, lit word by word ---------- */
 const speechEl = document.getElementById("speech");
+let sayText = "", sayCi = 0;        // what is being said, and how far through it he is (for interruptions)
 let sayChunks = [], sayLen = 0, sayT0 = 0, sayCps = 12, sayBoundary = false, sayTimer = null, sayHide = null, sayHtml = "";
 function chunkText(text) {
   // Sentences; long ones split at commas. Pieces must join back to exactly `text` (char positions matter).
@@ -1415,6 +1425,7 @@ function chunkText(text) {
   return out.map(c => c.text).join("") === text ? out : [{ start: 0, text }];
 }
 function renderSay(ci) {
+  sayCi = ci;
   let i = 0;
   while (i + 1 < sayChunks.length && sayChunks[i + 1].start <= ci) i++;
   const c = sayChunks[i]; if (!c) return;
@@ -1427,7 +1438,7 @@ function renderSay(ci) {
 }
 function sayStart(text, rate) {
   clearTimeout(sayHide); clearInterval(sayTimer);
-  sayChunks = chunkText(text); sayLen = text.length; sayBoundary = false;
+  sayChunks = chunkText(text); sayLen = text.length; sayBoundary = false; sayText = text;
   sayT0 = Date.now(); sayCps = 12 * (rate || 1);
   renderSay(0);
   document.body.classList.add("saying");
@@ -1445,6 +1456,8 @@ function mouthSay(text, ms = 2500) { sayStart(text, 1); sayEnd(ms); }
 
 let speakGen = 0;
 function speak(text, onDone, opts = {}) {
+  // He was just cut off: a sentence queued straight behind the one that was stopped is dropped too.
+  if (Date.now() - cutAt < 60) { onDone && onDone(); return; }
   hideDock();
   const gen = ++speakGen;
   if (!opts._waited && !opts.preview && !opts.nolog) logEvent("said", text);
@@ -1471,6 +1484,7 @@ function speak(text, onDone, opts = {}) {
   let finished = false;
   const finish = () => {
     if (finished) return; finished = true;
+    if (speakFinish === finish) speakFinish = null;
     clearTimeout(fallback);
     speechEndedAt = Date.now();                          // the mic stays shut for 300 ms after this
     if (gen === speakGen) { speakingUntil = 0; sayEnd(); mouthOff(); }   // unless a newer line cut this one off
@@ -1480,7 +1494,39 @@ function speak(text, onDone, opts = {}) {
   // iPhone sometimes never reports the end of speech: don't let that stall everything.
   const fallback = setTimeout(finish, estimate * 1.5 + 1000);
   u.onend = u.onerror = finish;
+  speakFinish = finish;
   speechSynthesis.speak(u);
+  try { wakeTick(); } catch {}                           // have the wake-word ear open while he talks, for interruptions (section 16)
+}
+// Interruptions ("barge-in"): stop him mid-sentence. Returns false if he wasn't speaking aloud.
+// Leaves a note of where he was cut off (cutNote) for the next message to the AI.
+let speakFinish = null, cutAt = 0, cutNote = null;
+const CUT_NOTE_MS = 5 * 60000;
+const bargeOn = () => brain.bargeIn !== false;
+function cutSpeech() {
+  if (!(isSpeaking() && Date.now() >= silentUntil)) return false;
+  const text = sayText || "";
+  let pos = Math.max(0, Math.min(text.length, Math.floor(sayCi)));
+  if (pos < text.length && pos > 0 && /\S/.test(text[pos]) && /\S/.test(text[pos - 1])) pos = text.slice(0, pos).search(/\S+$/);   // not mid-word
+  const said = text.slice(0, Math.max(0, pos)).trim(), rest = text.slice(Math.max(0, pos)).trim();
+  awaitingReply = false;                                 // conversation mode must not reopen the mic by itself
+  cutAt = Date.now();
+  if ("speechSynthesis" in window) speechSynthesis.cancel();
+  const f = speakFinish; speakFinish = null;
+  if (f) f();                                            // tidies up exactly as if the sentence had ended
+  else { speakGen++; speakingUntil = 0; speechEndedAt = Date.now(); mouthOff(); }   // still waiting for the voice list
+  sayEnd(300);
+  if (rest.length >= 12) {
+    cutNote = { said: said.slice(-200), at: Date.now() };
+    logEvent("state", said ? `Interrupted after: "${said.slice(-90)}"` : "Interrupted before he had said anything");
+  }
+  return true;
+}
+function takeCutNote() {
+  const c = cutNote; cutNote = null;
+  if (!c || Date.now() - c.at > CUT_NOTE_MS) return "";
+  return c.said ? `[interrupted after: "${c.said}"; the rest of your last reply was not heard] `
+                : `[interrupted before you had said anything; your last reply was not heard] `;
 }
 let speakingUntil = 0, lastSaidAt = 0;
 const isSpeaking = () => Date.now() < speakingUntil;
@@ -1622,6 +1668,7 @@ function continueConvo() {                              // called whenever Winsl
   if (!convo || !awaitingReply) return;
   awaitingReply = false;
   if (document.hidden || sleepState !== "awake" || panel.classList.contains("open")) { endConvo(); return; }
+  try { wakeHoldUntil = Date.now() + 1500; wakeRelease(); } catch {}   // free the microphone for the browser's recognition (section 16)
   setTimeout(() => {
     if (!convo) return;
     if (busy || isSpeaking()) { awaitingReply = true; return; }   // still replying: wait for the next finish
@@ -1739,6 +1786,8 @@ micBtn.addEventListener("click", toggleMic);
 function toggleMic() {
   unlockSpeech();
   if (ringing.length) { ringTap(); return; }            // a timer is going off: a tap answers it (section 13)
+  // A tap while he is talking just stops him, quietly: no reply, no listening.
+  if (bargeOn() && cutSpeech()) { listenGen++; endConvo(); show(""); poke(); return; }
   bumpIdle();                                            // talking counts as camera-preview activity
   if (convo || listening) {                              // tap again = stop the conversation
     const wasListening = listening;
@@ -1789,7 +1838,7 @@ In "say", give the answer itself in plain spoken words. Never read out sources, 
 
 Address your human as "${addr()}". Use that wherever your character notes say "sir", and adjust pronouns to suit it.
 
-You are speaking out loud through a phone speaker, so keep every reply short enough to say comfortably: one to three short, measured sentences. Stay composed. In "say": no emojis, no lists, no markdown, no exclamation marks (anything that needs those goes in "display", below). Only rate something out of ten when asked, or unprompted rarely (about one reply in ten at most, never two replies running). Write ratings in words, like "7 out of 10", never "7/10".
+You are speaking out loud through a phone speaker, so keep every reply short enough to say comfortably: one to three short, measured sentences. Stay composed. In "say": no emojis, no lists, no markdown, no exclamation marks (anything that needs those goes in "display", below). If your human's message starts with a note in square brackets saying you were interrupted, your previous reply was cut off at that point and they did not hear the rest: answer what they say now, do not start that reply again or repeat what was already heard, and carry on from where you stopped only if they ask you to. Only rate something out of ten when asked, or unprompted rarely (about one reply in ten at most, never two replies running). Write ratings in words, like "7 out of 10", never "7/10".
 Your body is not built yet: you are a face on a phone. Only talk about moving when your human asks you to, or when it truly fits the moment.
 Your face is subtle. Use "neutral" most of the time, "happy" for quiet warmth, and "excited" only when you are genuinely pleased.
 
@@ -2141,6 +2190,7 @@ const SNAP_DELAY_MS = 1500;
 let snapNow = false;                                    // set by snapFromBubble() for the next think()
 
 let busy = false;
+let lastReplyMem = null;             // { say, ids }: memories the latest AI reply added (undone if he is told to stop, section 16)
 // `image`: a camera frame (data URL). `file`: something shared from the text box (section 14):
 // { id, name, kind: "image" | "text" | "pdf", data, ... }.
 async function think(userText, image, file) {
@@ -2227,8 +2277,9 @@ async function think(userText, image, file) {
   setMood("thinking");
   // History only ever gets text: images are sent once and never stored.
   // A shared file is only ever sent with this one message; history keeps a short note of it (with its id).
-  brain.history.push({ role: "user", content: image ? userText + " [showed Winslow a photo]"
-    : file ? `${userText} [shared a file: "${file.name}", id ${file.id}]` : userText });
+  const cut = takeCutNote();                             // "[interrupted after: …]" if he was cut off just before this
+  brain.history.push({ role: "user", content: cut + (image ? userText + " [showed Winslow a photo]"
+    : file ? `${userText} [shared a file: "${file.name}", id ${file.id}]` : userText) });
   brain.history = brain.history.slice(-12);            // keep the last 12 messages
   // Tell the model plainly whether it can see anything this turn, so it never describes the human
   // or the room from an older photo (or from nothing at all).
@@ -2362,7 +2413,9 @@ async function think(userText, image, file) {
     brain.history.push({ role: "assistant", content: JSON.stringify({ say: reply.say, emotion: reply.emotion || "neutral",
       ...(reply.display ? { display: { title: reply.display.title, text: reply.display.text.slice(0, 1200) } } : {}) }) });
     // New memories (plain strings still work), and a note of which old ones the reply drew on.
+    const memHad = new Set(brain.memory.map(e => e.id));
     if (Array.isArray(reply.remember)) reply.remember.slice(0, 6).forEach(x => rememberFact(x));
+    lastReplyMem = { say: reply.say || "", ids: brain.memory.filter(e => !memHad.has(e.id)).map(e => e.id) };   // so "stop" can take them back
     markUsed(reply.used);
     if (file && typeof reply.file_desc === "string") fileDescribe(file.id, reply.file_desc);   // shown on the Files tab
     countChat(true, replyCost);
@@ -2603,6 +2656,7 @@ function openSettings() {
   $("sFaceGate").checked = brain.faceGate !== false;
   $("sNoisy").checked = !!brain.noisy;
   $("sWake").checked = !!brain.wakeWord;
+  $("sBarge").checked = bargeOn();
   $("sSense").value = LISTEN_ORDER.indexOf(listenKey());
   $("sConvo").checked = brain.convo !== false;
   $("sWeb").checked = brain.webSearch !== false;
@@ -2716,8 +2770,9 @@ $("btnSave").addEventListener("click", () => {
   brain.faceGate = $("sFaceGate").checked;
   brain.noisy = $("sNoisy").checked;
   brain.sensitivity = LISTEN_ORDER[+$("sSense").value] || "normal";
-  const wakeWas = !!brain.wakeWord;
+  const wakeWas = !!brain.wakeWord, bargeWas = bargeOn();
   brain.wakeWord = $("sWake").checked;
+  brain.bargeIn = $("sBarge").checked;
   save();
   if (brain.followFaces && !followWas) startTracking();
   if (!brain.followFaces && followWas) stopTracking();
@@ -2728,6 +2783,7 @@ $("btnSave").addEventListener("click", () => {
   setTimeout(() => setMood("neutral"), 1500);
   if (brain.wakeWord && !wakeWas) wakeStart();           // section 16 (after "Settings saved." so its caption shows)
   if (!brain.wakeWord && wakeWas) wakeRelease();
+  else if (bargeOn() !== bargeWas) wakeRelease();        // reopened within a second with the right echo setting
 });
 $("btnSetupLink").addEventListener("click", async () => {
   if (!brain.apiKey) { $("settingsMsg").textContent = "Enter and save your API key first."; return; }
@@ -5139,7 +5195,7 @@ filesLoaded.then(() => { if (dashIsOpen() && dashTab === "files") renderFiles();
 /* ----- Download backup ----- */
 const BACKUP_VERSION = 1, BACKUP_SUPPORTED = [1];
 const BACKUP_SETTINGS = ["model", "name", "address", "persona", "voiceName", "pitch", "rate", "camera", "sleepAfter", "faceGate", "noisy",
-  "sensitivity", "debug", "convo", "webSearch", "searchEngine", "homeCity", "proactive", "quietHours", "quietFrom", "quietTo"];
+  "sensitivity", "bargeIn", "debug", "convo", "webSearch", "searchEngine", "homeCity", "proactive", "quietHours", "quietFrom", "quietTo"];
 function easternDay(d = new Date()) {                     // "2026-11-14", by the calendar in US Eastern time
   try { return new Intl.DateTimeFormat("en-CA", { timeZone: "America/New_York", year: "numeric", month: "2-digit", day: "2-digit" }).format(d); }
   catch { return isoDay(d); }
@@ -5292,7 +5348,7 @@ function applySettings(s) {
   if (Number.isFinite(s.rate)) brain.rate = clamp(s.rate, 0.6, 1.6);
   if (s.camera === "user" || s.camera === "environment") brain.camera = s.camera;
   if ([0, 2, 5, 10].includes(s.sleepAfter)) brain.sleepAfter = s.sleepAfter;
-  ["faceGate", "noisy", "debug", "convo", "webSearch", "quietHours"].forEach(k => { if (typeof s[k] === "boolean") brain[k] = s[k]; });
+  ["faceGate", "noisy", "bargeIn", "debug", "convo", "webSearch", "quietHours"].forEach(k => { if (typeof s[k] === "boolean") brain[k] = s[k]; });
   if (LISTEN_ORDER.includes(s.sensitivity)) brain.sensitivity = s.sensitivity;
   if (SEARCH_ENGINES[s.searchEngine] && typeof s.searchEngine === "string") brain.searchEngine = s.searchEngine;
   if (isProLevel(s.proactive)) brain.proactive = s.proactive;
@@ -5870,7 +5926,10 @@ $("peopleList").addEventListener("click", e => {
    he is asleep, then opens the usual listening. The browser's own speech
    recognition can't share the microphone on Android, so the wake stream is
    let go before every listen (wakeRelease() in openMic()) and wakeTick()
-   takes it back once listening and conversation mode are over.
+   takes it back as soon as the browser's recognition is finished.
+   Interruptions ("Let me interrupt him", brain.bargeIn): while he is speaking
+   the same ear stays open and his name, "stop", "cancel" or "wait" cuts him
+   off (bargeCheck() → bargeIn()), unless he is the one saying it.
    ========================================================= */
 const VOSK_URL = "https://cdn.jsdelivr.net/npm/vosk-browser@0.0.8/dist/vosk.js";
 const VOSK_SRI = "sha384-nqyY8clHf93uBYFkgkACShMTuvE3U57yXSJaf0Ws+XgzcoUe6OB/1BiOfHqKOWeg";   // the script is refused if it ever differs
@@ -5883,13 +5942,40 @@ const WAKE_TAIL_MS = 1500;           // keep feeding the model this long after t
 const WAKE_MAX_FAILS = 5;
 // Words that sound like part of "Winslow". Without them the model hears the name in "Winston" or "he wins slowly".
 const WAKE_DECOYS = ["winston", "window", "windows", "wins", "win", "wind", "winter", "winner", "slow", "slowly", "low", "lot", "a", "when", "went", "he", "hey"];
+// Interruptions: the words that stop him mid-sentence (besides his name), and sound-alikes that must not.
+const BARGE_WORDS = ["stop", "cancel", "wait"];
+const BARGE_DECOYS = ["top", "step", "shop", "stopped", "stopping", "way", "late", "great", "what", "waiting", "can", "council", "castle"];
+const BARGE_ECHO = { stop: ["stop"], cancel: ["cancel"], wait: ["wait", "weight", "await"] };   // his own words that would sound like each one
+// "Listening sensitivity" for the wake word: how many other words may come before and after the name in one
+// stretch of sound, and how long the name may take to say. Strict = the name entirely on its own.
+const WAKE_LEVELS = {
+  strict:  { before: 0, after: 0, minSecs: 0.35, maxSecs: 1.1 },
+  normal:  { before: 0, after: 1, minSecs: 0.3,  maxSecs: 1.2 },
+  relaxed: { before: 1, after: 6, minSecs: 0.25, maxSecs: 1.4 }
+};
+// Everyday words, so that ordinary talk (a video, a television) has somewhere to go other than the name.
+const WAKE_COMMON = ("the of and to in is you that it was for on are as with his they i at be this have from or one had by word but not " +
+  "all were we your said there use an each which she do how their if will other about out many then them these so some her would " +
+  "make like him into time has look two more write go see number no could people my than first water been call who oil its now find " +
+  "long down day did get come made may part over new sound take only little work know place year live me back give most very after " +
+  "thing our just name good sentence man think say where help through much before line right too mean old any same tell boy follow " +
+  "came want show also around form three small set put end does another well large must big even such because turn here why ask " +
+  "men read need land different home us move try kind hand picture again change off play spell air away animal house point page " +
+  "letter mother answer found study still learn should world high every near add food between own below country plant last school " +
+  "father keep tree never start city earth eye light thought head under story saw left few while along might close something seem " +
+  "next hard open example begin life always those both paper together got group often run important until children side feet car " +
+  "mile night walk white sea began grow took river four carry state once book hear without second later miss idea enough eat face " +
+  "watch far real almost let above girl sometimes mountain cut young talk soon list song being leave family going today okay yes " +
+  "yeah really actually video game music news money phone computer week month morning").split(" ");
+const BARGE_STABLE = { strict: 5, normal: 3, relaxed: 2 };   // the word must hold for this many updates running (about 85 ms each)
+let bargeMode = false, bargeKey = "", bargeCount = 0, bargeLen = 0, bargeSkip = -1, wakeFlushUntil = 0;
 let wakeModel = null, wakeModelLoading = null, wakeRecog = null, wakeRecogKey = "";
 let wakeStream = null, wakeCtx = null, wakeSrc = null, wakeNode = null, wakeMute = null, wakePrev = null;
 let wakeOpening = false, wakeGen = 0, wakeLastAt = 0, wakeLoudAt = 0, wakeHoldUntil = 0, wakeRetryAt = 0, wakeFails = 0, wakeAnnounce = false;
 
 const wakeName = () => plainWords(brain.name).replace(/'/g, "") || "winslow";
 function wakeWanted() {
-  return !!brain.wakeWord && !document.hidden && !listening && !rec && !convo && Date.now() >= wakeHoldUntil;
+  return !!brain.wakeWord && !document.hidden && !listening && !rec && Date.now() >= wakeHoldUntil;
 }
 function loadVoskLib() {
   return new Promise((res, rej) => {
@@ -5926,10 +6012,12 @@ function wakeRecognizer(rate) {
   if (wakeRecog) try { wakeRecog.remove(); } catch {}
   // The grammar is the name, a few sound-alikes to catch near misses (so "Winston" isn't forced into "Winslow"),
   // and "[unk]", which soaks up every other word.
-  const decoys = WAKE_DECOYS.filter(w => !name.split(" ").includes(w));
-  wakeRecog = new wakeModel.KaldiRecognizer(rate, JSON.stringify([name, "hey " + name, "wake up", ...decoys, "[unk]"]));
+  const taken = new Set([...name.split(" "), ...BARGE_WORDS, "wake", "up"]);
+  const decoys = [...new Set([...WAKE_DECOYS, ...BARGE_DECOYS, ...WAKE_COMMON])].filter(w => !taken.has(w));
+  wakeRecog = new wakeModel.KaldiRecognizer(rate, JSON.stringify([name, "hey " + name, "wake up", ...BARGE_WORDS, ...decoys, "[unk]"]));
   wakeRecog.setWords(true);
   wakeRecog.on("result", m => wakeResult(m && m.result));
+  wakeRecog.on("partialresult", m => { if (bargeMode && m && m.result) bargeCheck(String(m.result.partial || "").split(" ").filter(Boolean), false); });
   wakeRecogKey = key;
 }
 async function wakeOpen() {
@@ -5942,9 +6030,10 @@ async function wakeOpen() {
     }
     await loadWakeModel();
     if (gen !== wakeGen || !wakeWanted()) return;
-    // No echo cancelling: on Android it puts the phone's sound in "call" mode, and his own voice is skipped below anyway.
+    // Echo cancelling takes his own voice out of what the microphone hears, which interruptions need. On Android it
+    // can put the phone's sound in "call" mode, so it is only asked for when interruptions are switched on.
     const stream = await navigator.mediaDevices.getUserMedia({
-      audio: { echoCancellation: false, noiseSuppression: true, autoGainControl: true, channelCount: 1 }, video: false
+      audio: { echoCancellation: bargeOn(), noiseSuppression: true, autoGainControl: true, channelCount: 1 }, video: false
     });
     if (gen !== wakeGen || !wakeWanted()) { stream.getTracks().forEach(t => t.stop()); return; }
     if (!wakeCtx) wakeCtx = new (window.AudioContext || window.webkitAudioContext)();
@@ -5987,11 +6076,26 @@ function wakeFailed(err) {
   setMood("sad"); show(msg);
   setTimeout(() => setMood("neutral"), 2000);
 }
-// Each chunk of sound (about 85 ms). Skipped while he is talking or a timer is chiming; a silent room rests the model.
+// Forget whatever the model has half-heard (its answer to this is thrown away).
+function wakeFlush() {
+  wakeFlushUntil = Date.now() + 500;
+  bargeKey = ""; bargeCount = 0; bargeLen = 0; bargeSkip = -1;
+  try { wakeRecog.retrieveFinalResult(); } catch {}
+}
+// Each chunk of sound (about 85 ms). While he talks it is only listened to for an interruption; a timer chiming is
+// skipped, and so is the moment after his voice stops; a silent room rests the model.
 function wakeAudio(e) {
   if (!wakeRecog || !wakeStream) return;
   const now = Date.now();
-  if ((isSpeaking() && now >= silentUntil) || now - speechEndedAt < 600 || ringing.length) { wakeLoudAt = 0; wakePrev = null; return; }
+  const talking = isSpeaking() && now >= silentUntil;
+  if (talking && bargeOn() && !ringing.length) {
+    if (!bargeMode) { bargeMode = true; wakeFlush(); }
+    wakeLoudAt = 0; wakePrev = null;
+    try { wakeRecog.acceptWaveform(e.inputBuffer); } catch {}
+    return;
+  }
+  if (bargeMode) { bargeMode = false; wakeFlush(); }     // his own voice must not linger in the model
+  if (talking || now - speechEndedAt < 600 || ringing.length) { wakeLoudAt = 0; wakePrev = null; return; }
   const d = e.inputBuffer.getChannelData(0);
   let sum = 0, n = 0;
   for (let i = 0; i < d.length; i += 4) { sum += d[i] * d[i]; n++; }
@@ -6004,24 +6108,118 @@ function wakeAudio(e) {
     wakeRecog.acceptWaveform(e.inputBuffer);
   } catch {}
 }
-function wakeResult(r) {
-  if (!r || !r.text) return;
+// Is he saying this word himself, about now? Looks at his own sentence around the point his voice has reached.
+function selfSaying(hit) {
+  const pos = Math.max(0, Math.min(sayLen, Math.floor(sayCi)));
+  const [back, ahead] = sayBoundary ? [70, 40] : [160, 120];   // wider when the position is only a time estimate
+  const near = plainWords((sayText || "").slice(Math.max(0, pos - back), pos + ahead));
+  if (hit.isName) return findName(near).found;
+  return (BARGE_ECHO[hit.word] || [hit.word]).some(w => new RegExp("\\b" + w).test(near));
+}
+// words = what the model has heard so far in this stretch of sound, while he is talking.
+function bargeCheck(words, final) {
+  if (!bargeMode || Date.now() < wakeFlushUntil) return;
+  if (words.length < bargeLen) { bargeKey = ""; bargeCount = 0; bargeSkip = -1; }   // a new stretch of sound
+  bargeLen = words.length;
   const name = wakeName().split(" ");
-  const words = Array.isArray(r.result) && r.result.length ? r.result : r.text.split(" ").map(w => ({ word: w, conf: 1 }));
-  let best = -1;
-  for (let i = 0; i + name.length <= words.length; i++) {
-    if (!name.every((w, j) => words[i + j].word === w)) continue;
-    // Straight after a sound-alike ("he wins a lot" heard as "he winslow") it is most likely a slip, not a call.
-    const before = i ? words[i - 1].word : "";
-    if (before !== "hey" && WAKE_DECOYS.includes(before)) continue;
-    best = Math.max(best, Math.min(...name.map((_, j) => Number(words[i + j].conf) || 0)));
+  let hit = null;
+  for (let i = words.length - 1; i >= 0 && !hit; i--) {
+    if (BARGE_WORDS.includes(words[i])) hit = { i, word: words[i], isName: false };
+    else if (i + 1 >= name.length && name.every((w, j) => words[i + 1 - name.length + j] === w)) {
+      const before = i - name.length >= 0 ? words[i - name.length] : "";
+      if (before === "hey" || !WAKE_DECOYS.includes(before)) hit = { i, word: name.join(" "), isName: true };
+    }
   }
-  if (best < 0) return;
-  if (best < WAKE_CONF) {
-    if (brain.debug) logEvent("ignored", `Wake word: perhaps heard "${brain.name}", but not sure enough (${best.toFixed(2)})`);
+  if (!hit || hit.i <= bargeSkip) return;
+  const key = hit.i + ":" + hit.word;
+  bargeCount = key === bargeKey ? bargeCount + 1 : 1; bargeKey = key;
+  if (!final && bargeCount < BARGE_STABLE[listenKey()]) return;          // not yet clear enough
+  bargeSkip = hit.i;                                                      // judged once, whatever the verdict
+  // The same rules as for ordinary listening: his own words, noisy room mode, nobody in view.
+  const why = selfSaying(hit) ? "it is what I was saying myself"
+    : brain.noisy && !hit.isName ? `noisy room mode: only "${brain.name}" interrupts`
+    : faceGateOn() && Date.now() - lastFaceAt > listenLevel().faceMs ? "no face in view"
+    : "";
+  if (why) { if (brain.debug) logEvent("ignored", `Interruption "${hit.word}": ${why}`); return; }
+  bargeIn(hit);
+}
+function bargeIn(hit) {
+  const spoken = sayText;
+  if (!cutSpeech()) return;
+  bargeMode = false;
+  wakeLastAt = Date.now();
+  poke(); notePresence("talk");
+  // "Stop" or "cancel": drop it altogether. What was asked and his answer are forgotten, and the microphone stays shut.
+  if (hit.word === "stop" || hit.word === "cancel") {
+    cutNote = null;
+    const erased = eraseExchange(spoken);
+    logEvent("heard", `"${hit.word}" (stopped him` + (erased ? "; that question and answer forgotten)" : ")"));
+    listenGen++; endConvo(); show("");
     return;
   }
+  logEvent("heard", `"${hit.isName ? brain.name : hit.word}" (interrupted him)`);
+  wakeListen();
+}
+// Take the answer he was giving, and the question that led to it, out of the conversation, with any
+// memories that answer made. Timers already set, notes on screen and the activity log are left as they are.
+function eraseExchange(spoken) {
+  const sayOf = m => { try { return String(JSON.parse(m.content).say || ""); } catch { return ""; } };
+  const same = (a, b) => !!a && !!b && a.trim().slice(0, 80) === b.trim().slice(0, 80);
+  const h = brain.history, last = h[h.length - 1];
+  if (!last || last.role !== "assistant" || !same(sayOf(last), spoken)) return false;
+  h.pop();
+  if (h.length && h[h.length - 1].role === "user") h.pop();
+  if (lastReplyMem && same(lastReplyMem.say, spoken)) lastReplyMem.ids.forEach(id => forgetMemory(id));
+  lastReplyMem = null;
+  save();
+  return true;
+}
+// Open the usual listening, as a tap on the face would.
+function wakeListen() {
+  if (document.hidden || listening || rec || busy || ringing.length || panel.classList.contains("open")) return;
+  wakeHoldUntil = Date.now() + 2000;
+  wakeRelease();
+  convo = brain.convo !== false; convoSilent = 0; convoIgnored = 0;
+  micBtn.classList.toggle("convo", convo);
+  setTimeout(() => { if (!listening && !rec && !document.hidden) startListening(true); }, WAKE_HANDOVER_MS);
+}
+function wakeResult(r) {
+  if (Date.now() < wakeFlushUntil) return;               // the tail of his own voice, being thrown away
+  if (!r || !r.text) return;
+  if (bargeMode) { bargeCheck(r.text.split(" ").filter(Boolean), true); bargeLen = 0; return; }
+  const why = wakeJudge(r);
+  if (why === null) return;                              // the name wasn't in it at all
+  if (why) { if (brain.debug) logEvent("ignored", `Wake word: heard "${brain.name}", but ${why}`); return; }
   wakeHeard();
+}
+// One stretch of sound, ended by a pause. Returns "" if it is a call to him, a reason if the name was there
+// but it doesn't count, or null if the name wasn't said. A call is the name said on its own: a television or
+// a video says it in the middle of a sentence, so where it sits is what tells them apart (WAKE_LEVELS).
+function wakeJudge(r) {
+  const name = wakeName().split(" ");
+  let words = Array.isArray(r.result) && r.result.length ? r.result.slice() : r.text.split(" ").filter(Boolean).map(w => ({ word: w, conf: 1 }));
+  let at = -1;
+  for (let i = 0; i + name.length <= words.length && at < 0; i++) if (name.every((w, j) => words[i + j].word === w)) at = i;
+  if (at < 0) return null;
+  const L = WAKE_LEVELS[listenKey()];
+  // "Hey" or "wake up" in front of the name is part of the call, not a word before it.
+  let lead = at;
+  if (lead >= 2 && words[lead - 2].word === "wake" && words[lead - 1].word === "up") lead -= 2;
+  else if (lead >= 1 && words[lead - 1].word === "hey") lead -= 1;
+  const before = lead, after = words.length - at - name.length;
+  // Straight after a sound-alike ("he wins a lot" heard as "he winslow") it is most likely a slip, not a call.
+  if (lead > 0 && WAKE_DECOYS.includes(words[lead - 1].word)) return "it ran on from a word that sounds like it";
+  if (before > L.before) return `it came ${before} word${before === 1 ? "" : "s"} into a sentence`;
+  if (after > L.after) return `${after} more word${after === 1 ? "" : "s"} followed it`;
+  const conf = Math.min(...name.map((_, j) => Number(words[at + j].conf) || 0));
+  if (conf < WAKE_CONF) return `not sure enough (${conf.toFixed(2)})`;
+  // How long the name took to say, when the model reports it: a clipped or drawn-out match is usually something else.
+  const first = words[at], last = words[at + name.length - 1];
+  if (Number.isFinite(first.start) && Number.isFinite(last.end)) {
+    const secs = (last.end - first.start) / name.length;
+    if (secs < L.minSecs || secs > L.maxSecs) return `it took ${secs.toFixed(2)} s to say, which isn't how it sounds`;
+  }
+  return "";
 }
 function wakeHeard() {
   const now = Date.now();
@@ -6033,17 +6231,9 @@ function wakeHeard() {
   poke(); notePresence("talk"); touchEndsDream();
   logEvent("heard", `"${brain.name}" (wake word)`);
   // The same as a tap on the face, minus the tap.
-  const listen = () => {
-    if (document.hidden || listening || rec || convo || busy || ringing.length || panel.classList.contains("open")) return;
-    wakeHoldUntil = Date.now() + 2000;
-    wakeRelease();
-    convo = brain.convo !== false; convoSilent = 0; convoIgnored = 0;
-    if (convo) micBtn.classList.add("convo");
-    setTimeout(() => { if (!listening && !rec && !document.hidden) startListening(true); }, WAKE_HANDOVER_MS);
-  };
-  if (asleep) { wake(listen); return; }                  // the wake-up line first, then he listens
+  if (asleep) { wake(() => { if (!convo) wakeListen(); }); return; }   // the wake-up line first, then he listens
   chirp();
-  listen();
+  wakeListen();
 }
 // Once a second: hold the microphone when the wake word should be listening, let it go when it shouldn't.
 function wakeTick() {
@@ -6053,9 +6243,9 @@ function wakeTick() {
 }
 function wakeStatusText() {
   if (!brain.wakeWord) return "Off";
-  if (wakeStream) return `Listening for "${brain.name}" (on this phone only)`;
+  if (wakeStream) return `Listening for "${brain.name}" (on this phone only)` + (bargeOn() ? `; "stop", "cancel" or "wait" interrupts me` : "; interruptions off");
   if (!wakeModel) return "Loading";
-  return listening || rec || convo ? "Paused while we talk" : "Paused";
+  return listening || rec ? "Paused while I listen to you" : "Paused";
 }
 // Switched on in settings: say what is happening, since the first load is a 40 MB download.
 function wakeStart() {
