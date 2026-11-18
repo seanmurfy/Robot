@@ -417,6 +417,16 @@
   .ev.t-search .tag { color: #c9a8ff; }
   .ev.t-remark .tag { color: #f2d98a; }       .ev.t-mood .tag { color: #8fd3d0; }
   .ev.t-timer .tag { color: #f6c48f; }
+  .ev.t-skill .tag { color: #a8e6a0; }
+  /* Lists on the Notes tab (section 17) */
+  .litems { list-style: none; }
+  .litems li { display: flex; align-items: center; gap: 4px; border-bottom: 1px solid #172229; font-size: 15px; line-height: 1.4; }
+  .litems li:last-child { border-bottom: none; }
+  .litems li span { flex: 1; min-width: 0; padding: 8px 0; color: var(--text); overflow-wrap: anywhere; }
+  .litems .ldel { width: 44px; height: 44px; flex-shrink: 0; border: none; border-radius: 50%; background: transparent;
+                  display: flex; align-items: center; justify-content: center; cursor: pointer; }
+  .litems .ldel .icon { width: 16px; height: 16px; stroke: var(--muted); }
+  .litems .ldel:active { background: rgba(255,138,128,.15); }
   /* Timers tab */
   .note.tmr.ring { border-color: rgba(168,212,255,.55); }
   .tkind { font-size: 12px; color: var(--muted); border: 1px solid #22323a; border-radius: 10px; padding: 1px 8px; white-space: nowrap; }
@@ -753,6 +763,20 @@
       <input id="sModel" type="text" placeholder="openrouter/auto">
       <small>Any model name from openrouter.ai/models. "openrouter/auto" picks one for you.</small>
 
+      <label for="sBudget">Monthly budget (US dollars)</label>
+      <input id="sBudget" type="number" min="0" max="10000" step="0.5" inputmode="decimal">
+      <small>Spent so far: <span id="budgetNow"></span>. At 80% Winslow mentions it once and economises: no web search unless
+        you ask for one, smaller photos, fewer remarks. Counts every AI cost OpenRouter reports, and starts again on the 1st. 0 = no limit.</small>
+
+      <label for="sOver">When the budget is spent</label>
+      <select id="sOver">
+        <option value="ask">Ask me before each AI request</option>
+        <option value="block">Don't use the AI until next month</option>
+        <option value="allow">Carry on</option>
+      </select>
+      <small>Asking: say "yes" for that one request, or "yes, for today" to stop the asking until tomorrow. Dreams and
+        AI-written remarks and briefings don't run while he would have to ask.</small>
+
       <label for="sCamera">Camera</label>
       <select id="sCamera">
         <option value="user">Front</option>
@@ -772,9 +796,10 @@
       </select>
       <small>About $0.005 per search with Perplexity, $0.007 with Exa. Auto uses the model's own search where it has one.</small>
 
-      <label for="sCity">Home city (optional)</label>
-      <input id="sCity" type="text" placeholder="e.g. Manchester, UK" autocomplete="off">
-      <small>Helps with local answers like weather and opening times. Stays on this phone and in your AI requests.</small>
+      <label for="sCity">Home town</label>
+      <input id="sCity" type="text" placeholder="e.g. Springfield, MA" autocomplete="off">
+      <small>For the weather and local answers. Add the state if the name is common. It is looked up once on Open-Meteo
+        (free, no account) and only its map position is used after that; forecasts come from Open-Meteo in °F and mph.</small>
 
       <label class="check"><input type="checkbox" id="sConvo"> Keep listening after replies</label>
       <small>Tap Winslow's face once and just keep talking: it listens again after each answer. It stops when
@@ -839,6 +864,14 @@
         <input type="time" id="sQuietTo" aria-label="Quiet hours end">
       </div>
       <small>During these hours, anything Winslow says first appears as words only, never aloud. Replies to you are unaffected.</small>
+
+      <label class="check"><input type="checkbox" id="sBrief"> Morning briefing</label>
+      <div class="quiet-times">
+        <span>Not before</span> <input type="time" id="sBriefFrom" aria-label="Earliest time for the morning briefing">
+      </div>
+      <small>The first time Winslow sees or hears you (or you tap him) after this time each day, outside quiet hours: a
+        greeting, the weather, alarms and reminders due today, a word on his recent journal, and a rating for the day ahead.
+        Under half a minute. Say "brief me" for one at any time. Each briefing is added to his journal.</small>
 
       <label for="sName">Robot name</label>
       <input id="sName" type="text">
@@ -918,7 +951,7 @@
    1. STORAGE: everything the robot knows lives in one object,
       saved in this browser's localStorage (on the phone).
    ========================================================= */
-const APP_VERSION = "v6.7";         // keep version.json in step with this
+const APP_VERSION = "v6.8";         // keep version.json in step with this
 // iPhone bug: after rotating, fixed buttons can be drawn in one place but tappable in another.
 // Snapping the page back to the top re-syncs them.
 function resyncLayout() {
@@ -972,6 +1005,13 @@ const DEFAULTS = {
   feel: { spirits: 0, energy: 0, t: 0 },   // slow mood, -1..1 each, drifts back to 0 (section 11)
   pro: {},               // speaking-first bookkeeping: today's count, last remark, presence (section 11)
   dream: {},             // last dream: { day, at, tries, triesDay } (section 12)
+  lists: [],             // named lists such as "shopping": [{ name, items: [{ text, t }], t }] (section 17)
+  homeGeo: null,         // "Home town" (homeCity) looked up once: { q, name, label, lat, lon, tz } or { q, notFound } (section 17)
+  briefing: true,        // "Morning briefing" (section 18)
+  briefFrom: "06:00",    // earliest time for the morning briefing
+  budget: 5,             // monthly AI budget in US dollars; 0 = no limit (section 19)
+  overBudget: "ask",     // when it's spent: "ask" before each AI request | "block" | "allow"
+  spend: null,           // month to date: { month: "YYYY-MM", cost, unpriced, told80, told100, okDay, blockTold }
   character: CHARACTER_VERSION
 };
 function load() {
@@ -1134,6 +1174,7 @@ function countChat(ai, cost) {
   u.chats++;
   if (ai) u.ai++;
   if (Number.isFinite(cost)) { u.cost += cost; u.priced++; }
+  if (ai) spendAdd(cost);                                // month to date, for the spending guard (section 19)
 }
 // Brain dashboard state (section 10). Declared early because the camera and AI code check it.
 let dashTab = "logs", sensesStream = null;
@@ -1620,7 +1661,8 @@ function judgeHeard(parts) {
     return { ok: false, text, conf, why: `no face in view in the last ${L.faceMs / 1000} seconds` };
   // A yes or no to an open "Did you say…?" needn't carry the name or be two words long.
   const confirming = !!pendingConfirm && Date.now() - pendingConfirm.at < CONFIRM_MS;
-  const answer = (confirming && (YES_RE.test(plainWords(text)) || NO_RE.test(plainWords(text)))) ||
+  const spendAsk = !!pendingSpend && Date.now() - pendingSpend.at < CONFIRM_MS;   // "Shall I use my AI brain anyway?" (section 19)
+  const answer = ((confirming || spendAsk) && (YES_RE.test(plainWords(text)) || NO_RE.test(plainWords(text)))) ||
     (ringing.length > 0 && isDismissal(text)) ||           // "thank you" / "stop" to a ringing timer, too
     (!!pendingFace && Date.now() - pendingFace.at < FACE_ASK_MS);   // a name, or yes/no, when he has just asked about a face (section 15)
   if (brain.noisy && !answer && !confirming) {
@@ -1788,6 +1830,8 @@ function toggleMic() {
   if (ringing.length) { ringTap(); return; }            // a timer is going off: a tap answers it (section 13)
   // A tap while he is talking just stops him, quietly: no reply, no listening.
   if (bargeOn() && cutSpeech()) { listenGen++; endConvo(); show(""); poke(); return; }
+  // The first tap of the morning, with a briefing waiting: the tap brings the briefing (section 18).
+  if (pendingBrief && briefDue() && !briefBusy && !busy && !listening && !convo && !isSpeaking()) { giveBriefing("morning"); return; }
   bumpIdle();                                            // talking counts as camera-preview activity
   if (convo || listening) {                              // tap again = stop the conversation
     const wasListening = listening;
@@ -1827,13 +1871,13 @@ Things you remember about your human and your world${brain.memory.length > MEM_S
 ${memoryPromptLines()}
 USING YOUR MEMORY: draw on it the way an attentive butler would, lightly and never as a recital. A plan or promise that is due soon may be brought up naturally and sparingly: once, when the moment suits, never one you have already raised in this chat, and not when your human is plainly busy with something else. A promise is something your human said they would do; a gentle nudge is enough. If the hour or what your human says departs from a routine you remember, you may remark on it ("You're usually up earlier, ${addr()}."). Call back to a running joke only occasionally, so it stays funny. Whenever your reply draws on a memory, put its id in "used".
 
-Right now it is ${nowText()}.${brain.homeCity ? ` Your human lives in or near ${brain.homeCity}; use that for anything local (weather, opening hours, events) unless they name another place.` : ""}
+Right now it is ${nowText()}.${brain.homeCity ? ` Your human lives in or near ${brain.homeGeo && brain.homeGeo.label && brain.homeGeo.q === brain.homeCity ? brain.homeGeo.label : brain.homeCity} (their home town); use that for anything local (weather, opening hours, events) unless they name another place.` : ""} Your human is American: give US customary units first (degrees Fahrenheit, miles, pounds, cups), with metric only if asked.
 
 ${moodPrompt()}
 ${facePromptText()}
-${searchOn() && !noSearch ? `CURRENT FACTS: you have a web search tool. Use it for anything time-sensitive or that may have changed since your training: sports fixtures, schedules and scores, weather, news, prices, opening hours, release dates, who currently holds a role, and anything "latest", "today", "tonight", "this week" or "next". Answer from what the search finds. If the search fails or finds nothing useful, say so plainly in character, for example "I'm afraid I can't confirm that at present, ${addr()}." Never guess or invent current facts.
+${searchOn() && !noSearch ? `CURRENT FACTS: you have a web search tool. Use it for anything time-sensitive or that may have changed since your training (except the weather: use your weather skill, below): sports fixtures, schedules and scores, news, prices, opening hours, release dates, who currently holds a role, and anything "latest", "today", "tonight", "this week" or "next". Answer from what the search finds. If the search fails or finds nothing useful, say so plainly in character, for example "I'm afraid I can't confirm that at present, ${addr()}." Never guess or invent current facts.
 You get ONE search per reply, so make the query count. Write it self-contained: replace words like "they", "he", "she", "it", "there" and "next" with the actual names from the conversation, and for schedules or fixtures include the month and year, for example "New England Patriots next game ${new Date().toLocaleDateString("en-GB", { month: "long", year: "numeric" })}".${recentSearchText()}`
-  : `CURRENT FACTS: you cannot search the web right now. For anything time-sensitive (scores, schedules, weather, news, prices, opening hours, anything "latest"), do not guess: say plainly, in character, that you can't confirm it at present, for example "I'm afraid I can't confirm that at present, ${addr()}." You may still use the date and time above.`}
+  : `CURRENT FACTS: you cannot search the web right now${economy() && searchOn() ? ` (this month's AI budget is past 80 percent, so searches are paused unless your human explicitly asks you to look something up; if they want one, they can say "look it up")` : ""}. The weather still works: use your weather skill, below. For anything else time-sensitive (scores, schedules, news, prices, opening hours, anything "latest"), do not guess: say plainly, in character, that you can't confirm it at present, for example "I'm afraid I can't confirm that at present, ${addr()}." You may still use the date and time above.`}
 In "say", give the answer itself in plain spoken words. Never read out sources, URLs, website names, citation marks or markdown.
 
 Address your human as "${addr()}". Use that wherever your character notes say "sir", and adjust pronouns to suit it.
@@ -1864,6 +1908,14 @@ Actions you can take. Put one in "action", or leave it null (the usual case):
 - "list_items": say what is set. Add "item": {"kind": "timer|alarm|reminder|null"}.
 Write every "at" in your human's local time (the date and time above), never UTC; work out "tomorrow morning" (9:00), "this evening" (18:00), "at 5" (the next 5 o'clock that makes sense) and so on. Your own program writes the confirmation, so for these five actions "say" can simply be "Very good."
 Timers, alarms and reminders currently set: ${timerPromptText()}
+
+SKILLS: small exact tools your own program runs. Never work out arithmetic, unit conversions, date sums or the weather in your head: ask for the skill. Put its name in "action" and its details in "item"; your program runs it and sends you the result, and you then phrase the answer in character. So "say" can simply be "One moment." One skill per reply. Simple facts you are sure of (2 + 2, how many feet in a mile) need no skill.
+- "calculate": sums, percentages, tips, splitting a bill. "item": {"expression": "(48.50 * 1.2) / 3"}. Use numbers and + - * / ^ ( ), "%" ("15% of 80", "80 + 15%"), sqrt(), round(x, 2), pi.
+- "convert": units. "item": {"value": 5, "from": "km", "to": "miles"} ("to" may be null for the usual US or metric counterpart). A plain cup, pint, gallon, ton or calorie is the American (food) one.
+- "date_math": days until a date, the day of the week, days between, a date plus some days. "item": {"op": "days_until|day_of_week|days_between|add_days", "date": "YYYY-MM-DD", "date2": "YYYY-MM-DD or null", "days": null, "months": null}. Work out which date is meant (Christmas, next Friday, Thanksgiving) from today's date; the skill does the counting.
+- "weather": the forecast from Open-Meteo, never a web search. "item": {"place": null for your human's home town, or a town such as "Denver, CO", "day": "today|tomorrow|a weekday|YYYY-MM-DD (up to 6 days ahead)"}.${brain.homeCity ? "" : ` No home town is set yet; if they ask about the weather without naming a place, ask which town, or suggest setting "Home town" in settings.`}
+- "list": your human's named lists, such as shopping or to do. "item": {"op": "add|remove|read|clear|lists", "name": "shopping", "items": ["eggs", "milk"]}. Your program says the confirmation, and a list being read goes on screen (Notes tab).
+Your human's lists: ${listsPromptText()}
 ${sharedFilesPromptText()}${dashIsOpen() ? `
 Your brain dashboard is open right now, on the ${dashTab} tab.` : ""}`;
 }
@@ -1882,7 +1934,8 @@ const searchOn = () => !!brain.apiKey && brain.webSearch !== false && !searchBro
 // Questions that only today's facts can answer: these must be backed by a search (see think()).
 // Only questions and requests count ("lovely weather today" is just conversation).
 const ASKING_RE = /\?\s*$|^(?:(?:hey|ok|okay|so|and|um|well|right|please|winslow),?\s+)*(?:what|what's|whats|when|who|who's|where|how|is|are|was|were|did|does|do|will|can|could|any|tell|check|give|find|look up|search|let me know)\b/i;
-const MUST_SEARCH_RE = /\b(scores?|fixtures?|kick.?off|who won|who'?s winning|weather|forecast|(?:the|latest|today'?s|any) news|headlines|stock|share price|price of|exchange rate|election|traffic|opening hours|open (?:today|tonight|now|until|on)|release date|next (?:game|match|race|fight|episode|launch)|(?:playing|on) (?:tonight|today|tomorrow))\b/i;
+// (Weather isn't here: the weather skill answers it, section 17.)
+const MUST_SEARCH_RE = /\b(scores?|fixtures?|kick.?off|who won|who'?s winning|(?:the|latest|today'?s|any) news|headlines|stock|share price|price of|exchange rate|election|traffic|opening hours|open (?:today|tonight|now|until|on)|release date|next (?:game|match|race|fight|episode|launch)|(?:playing|on) (?:tonight|today|tomorrow))\b/i;
 // Can the chosen model take images? OpenRouter's public model list says (input_modalities).
 // Read once per visit; unknown models are allowed to try.
 let visionCache = null;
@@ -2165,10 +2218,11 @@ function localReply(text) {
     `Noted, ${a}. Though I confess I am not sure what to do with it.`,
     `Try asking me to rate something, ${a}. I have opinions.`]), emotion: pick(["thinking", "neutral"]) };
 }
-function replyOffline(userText) {
+function replyOffline(userText, prefix) {             // prefix: a line said first (the budget is spent, section 19)
   setMood("thinking");
   setTimeout(() => {
     const reply = localBrain(userText);
+    if (prefix) reply.say = prefix + " " + reply.say;
     (reply.remember || []).forEach(x => rememberFact(x));
     countChat(false);
     nudgeMood(0.02, 0, "", true);
@@ -2193,7 +2247,7 @@ let busy = false;
 let lastReplyMem = null;             // { say, ids }: memories the latest AI reply added (undone if he is told to stop, section 16)
 // `image`: a camera frame (data URL). `file`: something shared from the text box (section 14):
 // { id, name, kind: "image" | "text" | "pdf", data, ... }.
-async function think(userText, image, file) {
+async function think(userText, image, file, opts = {}) {   // opts.paid: the human said yes to spending past the budget
   if (busy || capturing) {                               // still answering: only "thank you" to a ringing timer gets through
     if (ringing.length && isDismissal(userText)) { logEvent("heard", userText); dismissRing("voice"); }
     if (file) restage(file);                             // a shared file isn't lost: it waits in the text box
@@ -2213,6 +2267,24 @@ async function think(userText, image, file) {
       return;
     }
   }
+  // Answering "The budget is spent; shall I use my AI brain anyway?" (section 19). Yes sends what was asked; "yes, for today" stops the asking until tomorrow.
+  if (pendingSpend) {
+    const ps = pendingSpend, t = plainWords(userText), short = t.split(" ").length <= 9, fresh = Date.now() - ps.at < CONFIRM_MS;
+    pendingSpend = null;
+    if (fresh && short && (YES_RE.test(t) || /^(?:go ahead|do it|use it|fine|please)\b/.test(t))) {
+      const allDay = /\b(?:today|rest of the day|all day|don'?t ask|stop asking)\b/.test(t);
+      logEvent("heard", userText + (allDay ? " (spending allowed for the rest of today)" : " (spending allowed for this one)"));
+      if (allDay) { spendState().okDay = todayKey(); save(); }
+      return think(ps.text, ps.image, ps.file, { paid: true });
+    }
+    if (fresh && short && NO_RE.test(t)) {
+      logEvent("heard", userText + " (spending declined)");
+      const line = `Very good, ${addr()}. I'll manage on my own.`;
+      if (ps.file || ps.image) speak(line);
+      else if (!offlineSkill(ps.text)) replyOffline(ps.text, line);
+      return;
+    }
+  }
   logEvent("heard", userText);
   heardHook(userText);                                   // mood from the words; they're here and talking (section 11)
   // A shared file is kept (IndexedDB, section 14) and always goes to the AI with the words, so the
@@ -2220,6 +2292,9 @@ async function think(userText, image, file) {
   if (file) await fileStore(file);
   // Timers, alarms and reminders ("set a timer for 20 minutes", "wake me at 7"), with or without the AI (section 13).
   if (!file && timerCommand(userText)) return;
+  // "Brief me" (section 18) and "add eggs to the shopping list" (section 17), with or without the AI.
+  if (!file && briefCommand(userText)) return;
+  if (!file && listCommand(userText)) return;
   // "Back yourself up": a download button in his reply (downloads need a tap), with or without the AI.
   if (!file && backupCommand(userText)) return;
   // "Remember my face", "do you recognise me?", "forget Jack's face" (section 15), with or without the AI.
@@ -2228,6 +2303,8 @@ async function think(userText, image, file) {
   if (!file && memoryCommand(userText)) return;
   // With the dashboard open, short commands ("show memory", "scroll down", "that'll be all") act on it directly.
   if (!file && dashIsOpen() && dashCommand(userText)) return;
+  // This month's budget is spent (section 19): ask first, or answer without the AI, before anything costs money.
+  if (brain.apiKey && !opts.paid && !paidAllowed()) { budgetGate(userText, image, file); return; }
   // A "look" phrase opens the camera and snaps. With the preview already open, a fresh frame
   // only goes along when the words are about what's in view, or for the first thing said:
   // sending a photo with every sentence made Winslow describe the same scene over and over.
@@ -2261,7 +2338,7 @@ async function think(userText, image, file) {
       capturing = false;
     }
   }
-  if (!brain.apiKey) { if (file) fileNeedsBrain(file); else replyOffline(userText); return; }   // no key = offline brain
+  if (!brain.apiKey) { if (file) fileNeedsBrain(file); else if (!offlineSkill(userText)) replyOffline(userText); return; }   // no key = offline brain (and skills)
   // A model that can't see images would quietly ignore the photo and invent a description.
   // Check first, and say so instead.
   if ((image || (file && file.kind === "image")) && !(await modelSees(brain.model || "openrouter/auto"))) {
@@ -2292,13 +2369,15 @@ async function think(userText, image, file) {
   // Questions that can only be answered from today's facts. If the model answers one without
   // searching, it is asked again with a search; if that still finds nothing, he says he can't confirm.
   const mustSearch = MUST_SEARCH_RE.test(userText) && ASKING_RE.test(userText.trim()) && !(lastSearch && Date.now() - lastSearch.t < SEARCH_CACHE_MS);
-  const messages = [sys(false), ...brain.history];
+  // Past 80% of the month's budget (section 19): no web search unless the human asks for one in so many words.
+  const thrifty = searchOn() && economy() && !SEARCH_ASK_RE.test(userText);
+  const messages = [sys(thrifty), ...brain.history];
   if (image || file) messages[messages.length - 1] = { role: "user", content: userParts(userText, image, file) };
   let pdfOn = !!file && file.kind === "pdf";             // PDFs need OpenRouter's file-parser plugin
   // Web search runs inside OpenRouter during this same request (at most one search; see below for the
   // one retry). While it might be searching, show the thinking face and a caption: straight away for
   // timely questions, otherwise if the reply is slow.
-  const useSearch = searchOn();
+  const useSearch = searchOn() && !thrifty;
   let wiresTimer = null;
   const wires = () => { if (busy) { setMood("thinking"); show(`<b>${esc(brain.name)}:</b> Consulting the wires…`); } };
   if (useSearch) { if (TIMELY_RE.test(userText)) wires(); else wiresTimer = setTimeout(wires, 2500); }
@@ -2381,6 +2460,29 @@ async function think(userText, image, file) {
       }
       if (reply.action === "recall_file") reply.action = null;
     }
+    // A skill (section 17): run it here, then hand the result back once for him to phrase in character.
+    // Lists need no second trip: the program's own confirmation is spoken, as with timers.
+    if (SKILL_ACTIONS.includes(reply.action)) {
+      const name = reply.action, sk = await runSkill(name, reply.item);
+      if (sk.say) reply = { say: sk.say, emotion: "neutral", remember: reply.remember, used: reply.used };
+      else {
+        setMood("thinking");
+        messages[0] = sys(true);
+        messages.push({ role: "assistant", content: replyText(data).slice(0, 2000) },
+          { role: "user", content: `[Not your human speaking: your own program ran the ${name} skill you asked for. The result:\n${sk.text}\nNow answer your human's last message in character, from this result. No other skill and no search. Reply with the usual JSON.]` });
+        try {
+          const again = await post(false);
+          if (!again.res.ok) throw new Error(again.data?.error?.message || ("HTTP " + again.res.status));
+          data = again.data; replyCost = (Number.isFinite(replyCost) ? replyCost : 0) + (Number(data.usage?.cost) || 0);
+          reply = parseReply(replyText(data));
+          if (!String(reply.say || "").trim()) throw new Error("no reply came back");
+        } catch (err) {
+          logEvent("error", `Skill reply (${name}): ${err.message}; said the result plainly`);
+          reply = { say: sk.plain, emotion: "neutral" };
+        }
+        if (SKILL_ACTIONS.includes(reply.action) || reply.action === "recall_file") reply.action = null;
+      }
+    }
     // Anything that won't work out loud goes on screen (the dashboard's Notes tab); he says just the gist.
     reply.display = displayFrom(reply);
     // Spoken text: no links or citation marks, and "9 out of 10" rather than "9/10".
@@ -2401,9 +2503,11 @@ async function think(userText, image, file) {
     } else if (mustSearch) {
       // A current-facts question with no search behind the answer (search off, unavailable, or skipped
       // twice): whatever the model said came from memory, so he doesn't say it.
-      logEvent("search", `No search ran for "${userText}", so Winslow didn't answer from memory`);
-      reply.say = `I'm afraid I can't confirm that at present, ${addr()}. ` +
-        (!searchOn() ? (brain.webSearch ? "My web search isn't available with this AI model." : "Web search is switched off in my settings.") : "My search didn't come through.");
+      logEvent("search", `No search ran for "${userText}", so Winslow didn't answer from memory` + (thrifty ? " (saving: over 80% of the month's budget)" : ""));
+      reply.say = thrifty
+        ? `I'm sparing the searches, ${addr()}: we're past eighty percent of this month's budget. Ask me to look it up and I shall.`
+        : `I'm afraid I can't confirm that at present, ${addr()}. ` +
+          (!searchOn() ? (brain.webSearch ? "My web search isn't available with this AI model." : "Web search is switched off in my settings.") : "My search didn't come through.");
       reply.emotion = "neutral"; reply.action = null; reply.display = null;
     }
     if (reply.display) addNote(reply.display, useSearch && si.ran ? si.sources : []);
@@ -2420,10 +2524,11 @@ async function think(userText, image, file) {
     if (file && typeof reply.file_desc === "string") fileDescribe(file.id, reply.file_desc);   // shown on the Files tab
     countChat(true, replyCost);
     nudgeMood(reply.display || reply.action ? 0.05 : 0.02, -0.01, "", true);   // a job done (talking tires him a little)
+    const bnote = budgetNote();                          // 80% or 100% of the month's budget: said once (section 19)
     save();
 
     setMood(reply.emotion || "neutral");
-    speak(reply.say || "Hmm.", () => setTimeout(() => setMood("neutral"), 1200));
+    speak((reply.say || "Hmm.") + (bnote ? " " + bnote : ""), () => setTimeout(() => setMood("neutral"), 1200));
     doAction(reply);
   } catch (err) {
     logEvent("error", "Brain: " + err.message);
@@ -2578,7 +2683,8 @@ function closePreview() {
 async function grabFrame() {
   for (let i = 0; i < 40 && !pv.videoWidth; i++) await sleep(50);
   if (!pv.videoWidth) throw new Error("Camera gave no picture");
-  const scale = Math.min(1, 512 / Math.max(pv.videoWidth, pv.videoHeight));
+  const small = economy();                               // past 80% of the month's budget: smaller, cheaper photos (section 19)
+  const scale = Math.min(1, (small ? 320 : 512) / Math.max(pv.videoWidth, pv.videoHeight));
   const c = document.createElement("canvas");
   c.width = Math.round(pv.videoWidth * scale);
   c.height = Math.round(pv.videoHeight * scale);
@@ -2586,7 +2692,7 @@ async function grabFrame() {
   preview.classList.add("flash"); document.body.classList.add("focusing");
   setTimeout(() => preview.classList.remove("flash"), 150);
   setTimeout(() => document.body.classList.remove("focusing"), 650);
-  return c.toDataURL("image/jpeg", 0.7);
+  return c.toDataURL("image/jpeg", small ? 0.6 : 0.7);
 }
 
 lookBtn.addEventListener("click", () => {
@@ -2668,6 +2774,11 @@ function openSettings() {
   $("sQuiet").checked = brain.quietHours !== false;
   $("sQuietFrom").value = validTime(brain.quietFrom) ? brain.quietFrom : DEFAULTS.quietFrom;
   $("sQuietTo").value = validTime(brain.quietTo) ? brain.quietTo : DEFAULTS.quietTo;
+  $("sBrief").checked = brain.briefing !== false;
+  $("sBriefFrom").value = briefFromText();
+  $("sBudget").value = String(budgetNow());
+  $("sOver").value = overMode();
+  $("budgetNow").textContent = spendText();
   $("sPersona").value = brain.persona;
   $("sMemory").value = brain.memory.map(e => e.text).join("\n");
   $("sPitch").value = brain.pitch ?? 0.9;
@@ -2757,8 +2868,14 @@ $("btnSave").addEventListener("click", () => {
   brain.convo = $("sConvo").checked;
   brain.webSearch = $("sWeb").checked;
   brain.searchEngine = SEARCH_ENGINES[$("sEngine").value] ? $("sEngine").value : "perplexity";
+  const cityWas = brain.homeCity || "";
   brain.homeCity = $("sCity").value.trim().slice(0, 80);
   brain.debug = $("sDebug").checked;
+  brain.briefing = $("sBrief").checked;
+  if (validTime($("sBriefFrom").value)) brain.briefFrom = $("sBriefFrom").value;
+  const bud = parseFloat($("sBudget").value);
+  brain.budget = Number.isFinite(bud) && bud >= 0 ? Math.min(10000, Math.round(bud * 100) / 100) : DEFAULTS.budget;
+  brain.overBudget = ["ask", "block", "allow"].includes($("sOver").value) ? $("sOver").value : "ask";
   brain.proactive = isProLevel($("sProactive").value) ? $("sProactive").value : "rarely";
   brain.quietHours = $("sQuiet").checked;
   if (validTime($("sQuietFrom").value)) brain.quietFrom = $("sQuietFrom").value;
@@ -2783,7 +2900,19 @@ $("btnSave").addEventListener("click", () => {
   setTimeout(() => setMood("neutral"), 1500);
   if (brain.wakeWord && !wakeWas) wakeStart();           // section 16 (after "Settings saved." so its caption shows)
   if (!brain.wakeWord && wakeWas) wakeRelease();
+  if (brain.homeCity !== cityWas) homeTownCheck();       // a new home town is looked up once (section 17)
 });
+// Look the home town up now, so a typo shows straight away rather than at the next weather question.
+async function homeTownCheck() {
+  if (!brain.homeCity) { brain.homeGeo = null; save(); return; }
+  try {
+    const g = await homeGeo();
+    setTimeout(() => show(esc(g ? `Home town: ${g.label}. I'll use it for the weather.`
+      : `I couldn't find "${brain.homeCity}" on the map. Try adding the state, such as "Springfield, MA".`)), 1600);
+  } catch (e) {
+    setTimeout(() => show(esc(`I couldn't look up "${brain.homeCity}" just now (${e.message}). I'll try again when you ask about the weather.`)), 1600);
+  }
+}
 $("btnSetupLink").addEventListener("click", async () => {
   if (!brain.apiKey) { $("settingsMsg").textContent = "Enter and save your API key first."; return; }
   const link = makeSetupLink();
@@ -2860,6 +2989,12 @@ function wake(after, opts = {}) {                       // opts.quiet: no wake-u
     document.body.classList.remove("waking");
     if (sleepState !== "awake") return;
     if (opts.quiet) { finish(); return; }
+    // The morning's first sight of the human: the briefing is the wake-up line (section 18).
+    if (pendingBrief && briefDue() && speechUnlocked && !briefBusy) {
+      giveBriefing("morning", finish);
+      setTimeout(finish, 45000);                         // safety net, as below
+      return;
+    }
     // Someone just arrived: a queued "good morning" or "welcome back" is the wake-up line instead.
     const greet = wakeRemark();
     dropPendingRemark();                                 // either way, they've been greeted
@@ -3296,7 +3431,7 @@ if (window.visualViewport) {
        Memory, Senses, Status. Never shows the API key.
    ========================================================= */
 const DASH_TABS = ["notes", "timers", "logs", "memory", "journal", "files", "people", "senses", "status"];
-const LOG_TYPES = { heard: "Heard", said: "Said", saw: "Saw", memory: "Memory", search: "Search", remark: "Remark", mood: "Mood", timer: "Timers", ignored: "Ignored", state: "State", error: "Error" };
+const LOG_TYPES = { heard: "Heard", said: "Said", saw: "Saw", memory: "Memory", search: "Search", remark: "Remark", mood: "Mood", timer: "Timers", skill: "Skills", ignored: "Ignored", state: "State", error: "Error" };
 const dashSay = $("dashSay"), dashBody = $("dashBody"), logList = $("logList"), factList = $("factList");
 const senseVideo = $("senseVideo"), senseCamMsg = $("senseCamMsg"), dashMic = $("dashMic");
 let logFilter = "all", dashTicker = null, sensesOpening = false;
@@ -3366,8 +3501,8 @@ function addNote(d, sources) {
   if (dashIsOpen() && dashTab === "notes") renderNotes();
 }
 function renderNotes() {
-  const notes = Array.isArray(brain.notes) ? brain.notes : [];
-  $("noteList").innerHTML = notes.length ? notes.map((n, i) => {
+  const notes = Array.isArray(brain.notes) ? brain.notes : [], lists = listsHtml();   // named lists first (section 17)
+  $("noteList").innerHTML = lists + (notes.length ? notes.map((n, i) => {
     const d = new Date(n.t), today = d.toDateString() === new Date().toDateString();
     const time = (today ? "" : d.toLocaleDateString([], { month: "short", day: "numeric" }) + " ") +
                  d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
@@ -3376,7 +3511,7 @@ function renderNotes() {
       `<button class="note-copy" data-i="${i}" aria-label="Copy this note">Copy</button></div>` +
       `<div class="md">${mdHtml(n.text)}</div>${linksHtml(n)}</article>`;
   }).reverse().join("")
-    : `<p class="dash-empty">Nothing on screen yet. Ask for a list, a recipe or directions, and it will appear here.</p>`;
+    : lists ? "" : `<p class="dash-empty">Nothing on screen yet. Ask for a recipe or directions, or say "add eggs to the shopping list", and it will appear here.</p>`);
 }
 $("noteList").addEventListener("click", async e => {
   const b = e.target.closest(".note-copy"); if (!b) return;
@@ -3678,8 +3813,8 @@ function renderSenses() {
 /* ----- Status ----- */
 function renderStatus() {
   const u = usageToday();
-  const total = u.cost + (u.remarkCost || 0) + (u.dreamCost || 0);   // chats, AI-written remarks and the dream
-  const cost = u.priced || u.remarkCost || u.dreamCost ?`$${total.toFixed(4)}` + (u.priced < u.ai ? ` (${u.ai - u.priced} replies not priced)` : "")
+  const total = u.cost + (u.remarkCost || 0) + (u.dreamCost || 0) + (u.briefCost || 0);   // chats, AI-written remarks, the dream, the morning briefing
+  const cost = u.priced || u.remarkCost || u.dreamCost || u.briefCost ? `$${total.toFixed(4)}` + (u.priced < u.ai ? ` (${u.ai - u.priced} replies not priced)` : "")
     : u.ai ? "Not reported by this model" : "$0.0000";
   const f = feelNow(), sgn = v => (v >= 0 ? "+" : "−") + Math.abs(v).toFixed(2);
   const p = proToday(), lvl = PRO_LEVELS[proLevel()];
@@ -3688,9 +3823,14 @@ function renderStatus() {
     ["Version", APP_VERSION], ["AI model", brain.apiKey ? brain.model || "openrouter/auto" : "Offline brain (no API key)"],
     ["API key", brain.apiKey ? "Set (hidden)" : "Not set"],
     ["Chats today", `${u.chats}` + (u.ai ? ` (${u.ai} with the AI)` : "")], ["AI cost today (est.)", cost],
+    ["Spent this month", spendText()], ["Budget", budgetStateText()],
+    ["Morning briefing", brain.briefing === false ? "Off" : `From ${briefFromText()}` + (proToday().briefDay === todayKey() ? " (given today)" : pendingBrief ? " (waiting for a quiet moment" + (speechUnlocked ? ")" : ", or a tap)") : "")],
+    ["Weather", !brain.homeCity ? "No home town set" : brain.homeGeo && brain.homeGeo.q === brain.homeCity
+      ? (brain.homeGeo.notFound ? `"${brain.homeCity}" not found` : `${brain.homeGeo.label} (Open-Meteo, °F, cached 30 min)`) : `${brain.homeCity} (not looked up yet)`],
+    ["Lists", (() => { const ls = listsAll().filter(l => l.items.length); return ls.length ? ls.map(l => `${l.name} (${l.items.length})`).join(", ") + " (Notes tab)" : "None yet"; })()],
     ["State", state], ["Mood", moodSummary(f)],
     ["Spirits / energy", `${sgn(f.spirits)} / ${sgn(f.energy)} (−1 to +1, drifts back to 0)`],
-    ["Speaks first", !lvl.max ? "Off" : `${lvl.label}: ${p.count} of ${lvl.max} today` + (p.aiSaid ? ` (${p.aiSaid} written by the AI)` : "") +
+    ["Speaks first", !lvl.max ? "Off" : `${lvl.label}: ${p.count} of ${remarkMax()} today` + (remarkMax() < lvl.max ? " (fewer while saving)" : "") + (p.aiSaid ? ` (${p.aiSaid} written by the AI)` : "") +
       (p.lastAt && new Date(p.lastAt).toDateString() === new Date().toDateString()
         ? `, last at ${new Date(p.lastAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}` : "")],
     ["Quiet hours", brain.quietHours === false ? "Off" : `${brain.quietFrom}–${brain.quietTo}` + (inQuietHours() ? " (now: words only)" : "")],
@@ -3909,7 +4049,11 @@ function notePresence(src) {
     const hrs = dayHoursBetween(last, now);
     if (hrs >= 3) nudgeMood(-Math.min(0.25, 0.05 * (hrs - 2)), 0, `being left alone for ${Math.round(hrs)} hours`);
   }
-  if (p.greetDay !== todayKey()) {
+  if (briefDue()) {
+    // The morning briefing is due (section 18): it is the day's greeting, given on the first sight, sound or
+    // touch of the human. Merely opening the app doesn't count (an auto-update reload may happen to an empty room).
+    if (src !== "open" && !pendingBrief) { pendingBrief = { at: now }; setTimeout(briefTick, 1200); }
+  } else if (p.greetDay !== todayKey()) {
     p.greetDay = todayKey();
     if (new Date().getHours() < 5) p.lateDay = todayKey();     // a small-hours greeting covers the hour
     queueRemark("first"); queued = true;
@@ -3940,9 +4084,11 @@ function remarkBlocked() {
     previewOpen() || dashIsOpen() || panel.classList.contains("open") || typingOpen() || isSpeaking() || remarkBusy || dreaming ||
     now - lastSaidAt < 30000 || now - lastHeardAt < AFTER_CHAT_MS;
 }
+// Past 80% of the month's budget, half as many (section 19).
+const remarkMax = () => { const m = PRO_LEVELS[proLevel()].max; return economy() ? Math.floor(m / 2) : m; };
 function remarkAllowed() {
   const lvl = PRO_LEVELS[proLevel()], p = proToday();
-  return lvl.max > 0 && p.count < lvl.max && Date.now() - (Number(p.lastAt) || 0) >= lvl.gapMs;
+  return remarkMax() > 0 && p.count < remarkMax() && Date.now() - (Number(p.lastAt) || 0) >= lvl.gapMs;
 }
 
 // Dated memories (see memDueIn() in section 1): anything whose date is today gets one reminder.
@@ -4029,6 +4175,7 @@ async function aiRemark(r) {
     if (!res.ok) throw new Error(data?.error?.message || ("HTTP " + res.status));
     const cost = Number(data.usage?.cost);
     if (Number.isFinite(cost)) { const u = usageToday(); u.remarkCost = (u.remarkCost || 0) + cost; }
+    spendAdd(cost);
     const msg = data.choices?.[0]?.message || {};
     const raw = Array.isArray(msg.content) ? msg.content.map(x => x?.text || "").join("") : String(msg.content || "");
     const say = cleanSay(parseReply(raw).say || "").trim();
@@ -4059,7 +4206,8 @@ function silentSay(text, onDone) {
 async function makeRemark(r) {
   const p = proToday();
   let text = poolLine(r), byAi = false;
-  if (brain.apiKey && AI_KINDS.includes(r.kind) && (p.ai || 0) < AI_REMARKS_PER_DAY) {
+  // AI-written only within budget: past 80% (or spent) they are stock lines (section 19).
+  if (brain.apiKey && AI_KINDS.includes(r.kind) && (p.ai || 0) < AI_REMARKS_PER_DAY && !economy() && paidAllowed()) {
     remarkBusy = true; p.ai = (p.ai || 0) + 1; save();               // counts attempts, so cost stays capped
     try { const t = await aiRemark(r); if (t) { text = t; byAi = true; } }
     catch (err) { logEvent("error", "Remark (AI): " + (err.name === "AbortError" ? "took too long" : err.message) + "; used a stock line"); }
@@ -4121,6 +4269,7 @@ function dreamDue() {
   const d = dreamState();
   if (!brain.apiKey || dreaming || document.hidden || d.day === todayKey()) return false;   // never without a key; once a day
   if (d.triesDay === todayKey() && (d.tries || 0) >= DREAM_TRIES) return false;
+  if (!paidAllowed()) return false;                      // the month's budget is spent: no dreaming until it's allowed (section 19)
   return Date.now() >= dreamRetryAt;
 }
 function dreamIdle() {
@@ -4267,6 +4416,7 @@ async function dream() {
     if (!res.ok) throw new Error(data?.error?.message || ("HTTP " + res.status));
     const cost = Number(data.usage?.cost);
     if (Number.isFinite(cost)) { const u = usageToday(); u.dreamCost = (u.dreamCost || 0) + cost; }
+    spendAdd(cost);
     const msg = data.choices?.[0]?.message || {};
     const raw = Array.isArray(msg.content) ? msg.content.map(x => x?.text || "").join("") : String(msg.content || "");
     const ops = parseJsonObject(raw);
@@ -5122,7 +5272,8 @@ async function stageFile(file) {
   try {
     if (kind === "image") {
       const img = await loadImage(file);
-      f.data = drawScaled(img, FILE_IMG_PX, 0.8); f.thumb = drawScaled(img, FILE_THUMB_PX, 0.7);
+      f.data = economy() ? drawScaled(img, 640, 0.7) : drawScaled(img, FILE_IMG_PX, 0.8);   // smaller past 80% of the budget (section 19)
+      f.thumb = drawScaled(img, FILE_THUMB_PX, 0.7);
       f.mime = "image/jpeg"; f.size = Math.round((f.data.length - 23) * 0.75);
     } else if (kind === "text") {
       if (file.size > 20 * 1024 * 1024) throw new Error("too big");
@@ -5194,7 +5345,8 @@ filesLoaded.then(() => { if (dashIsOpen() && dashTab === "files") renderFiles();
 /* ----- Download backup ----- */
 const BACKUP_VERSION = 1, BACKUP_SUPPORTED = [1];
 const BACKUP_SETTINGS = ["model", "name", "address", "persona", "voiceName", "pitch", "rate", "camera", "sleepAfter", "faceGate", "noisy",
-  "sensitivity", "bargeIn", "debug", "convo", "webSearch", "searchEngine", "homeCity", "proactive", "quietHours", "quietFrom", "quietTo"];
+  "sensitivity", "bargeIn", "debug", "convo", "webSearch", "searchEngine", "homeCity", "proactive", "quietHours", "quietFrom", "quietTo",
+  "briefing", "briefFrom", "budget", "overBudget"];
 function easternDay(d = new Date()) {                     // "2026-11-14", by the calendar in US Eastern time
   try { return new Intl.DateTimeFormat("en-CA", { timeZone: "America/New_York", year: "numeric", month: "2-digit", day: "2-digit" }).format(d); }
   catch { return isoDay(d); }
@@ -5223,7 +5375,8 @@ async function buildBackup(withPhotos, withFaces) {
     app: "winslow", backupVersion: BACKUP_VERSION, appVersion: APP_VERSION, exportedAt: new Date().toISOString(),
     memory: brain.memory, journal, settings, logs, files,
     ...(withFaces ? { people: people.map(personOut) } : {}),          // face prints only when asked for (section 15)
-    chat: { history: brain.history, notes: Array.isArray(brain.notes) ? brain.notes : [] }
+    chat: { history: brain.history, notes: Array.isArray(brain.notes) ? brain.notes : [] },
+    lists: listsAll()                                                  // named lists (v6.8; older readers ignore it)
   }, null, 1));
 }
 const isIOS = () => /iP(hone|ad|od)/.test(navigator.userAgent) || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
@@ -5333,7 +5486,13 @@ function cleanBackup(d) {
   // Known faces (only in backups made with "Include known faces"): null = the backup doesn't carry any.
   const faces = Array.isArray(d.people) ? d.people.slice(0, PEOPLE_MAX).map(personRec).filter(Boolean)
     .filter((p, i, a) => a.findIndex(o => o.id === p.id) === i) : null;
-  return { exportedAt: str(d.exportedAt, 40), appVersion: str(d.appVersion, 20), memory, logs, files, history, notes, people: faces,
+  // Named lists (v6.8): null = the backup doesn't carry any (an older one), so the lists here are left alone.
+  const lists = Array.isArray(d.lists) ? d.lists.filter(l => l && typeof l.name === "string" && Array.isArray(l.items)).slice(0, LISTS_MAX)
+    .map(l => ({ name: listKey(l.name) || "list", t: okTime(l.t) || Date.now(),
+      items: l.items.filter(x => x && typeof x.text === "string" && x.text.trim()).slice(0, LIST_ITEMS_MAX)
+        .map(x => ({ text: x.text.trim().slice(0, 80), t: okTime(x.t) || Date.now() })) }))
+    .filter((l, i, a) => l.items.length && a.findIndex(o => o.name === l.name) === i) : null;
+  return { exportedAt: str(d.exportedAt, 40), appVersion: str(d.appVersion, 20), memory, logs, files, history, notes, people: faces, lists,
     journal: arr(d.journal).map(journalEntry).filter(Boolean),
     settings: d.settings && typeof d.settings === "object" && !Array.isArray(d.settings) ? d.settings : {} };
 }
@@ -5353,6 +5512,10 @@ function applySettings(s) {
   if (isProLevel(s.proactive)) brain.proactive = s.proactive;
   if (validTime(s.quietFrom)) brain.quietFrom = s.quietFrom;
   if (validTime(s.quietTo)) brain.quietTo = s.quietTo;
+  if (typeof s.briefing === "boolean") brain.briefing = s.briefing;
+  if (validTime(s.briefFrom)) brain.briefFrom = s.briefFrom;
+  if (Number.isFinite(s.budget) && s.budget >= 0) brain.budget = Math.min(10000, Math.round(s.budget * 100) / 100);
+  if (["ask", "block", "allow"].includes(s.overBudget)) brain.overBudget = s.overBudget;
 }
 let restoreData = null;
 const restoreBox = $("restoreBox");
@@ -5377,6 +5540,7 @@ async function readRestore(file) {
     `${c.memory.length} memories · ${c.journal.length} journal entries · ${c.logs.length} log entries · ${c.files.length} shared files` +
     (c.files.length ? ` (${withData ? withData + " with contents" : "names and descriptions only"})` : "") +
     (c.people ? ` · ${c.people.length} known face${c.people.length === 1 ? "" : "s"}` : "") +
+    (c.lists && c.lists.length ? ` · ${c.lists.length} list${c.lists.length === 1 ? "" : "s"}` : "") +
     `<div class="row"><button class="primary" data-rs="merge">Merge</button><button class="danger" data-rs="replace">Replace everything</button>` +
     `<button data-rs="cancel">Cancel</button></div>` +
     `<small>Merge adds what's new and skips anything already here. Replace swaps everything for the backup (memory, journal, log, ` +
@@ -5435,6 +5599,13 @@ async function applyRestore(mode) {
     const { id, ...e } = x;
     brain.memory.push({ id: id && !memById(id) ? id : newMemId(), ...e }); added++;
   }
+  // Lists (section 17): replace swaps them when the backup has any; merge adds lists and items not here yet.
+  if (d.lists && !merge) brain.lists = d.lists;
+  if (d.lists && merge) d.lists.forEach(l => {
+    const have = listsAll().find(o => o.name === l.name);
+    if (!have) { if (brain.lists.length < LISTS_MAX) brain.lists.push(l); return; }
+    l.items.forEach(x => { if (have.items.length < LIST_ITEMS_MAX && !have.items.some(y => sameItem(y.text, x.text))) have.items.push(x); });
+  });
   if (merge && d.notes) {
     brain.notes = Array.isArray(brain.notes) ? brain.notes : [];
     d.notes.forEach(n => { if (!brain.notes.some(o => o.t === n.t && o.text === n.text)) brain.notes.push(n); });
@@ -6255,6 +6426,862 @@ function wakeStart() {
 setInterval(wakeTick, 1000);
 document.addEventListener("visibilitychange", () => { if (document.hidden) wakeRelease(); });
 window.addEventListener("pagehide", wakeRelease);
+
+/* =========================================================
+   17. SKILLS (v6.8): small exact tools, so Winslow never guesses at sums, conversions, dates or weather.
+   The AI asks for one in "action" (calculate, convert, date_math, weather, list) with details in
+   "item"; runSkill() runs it here and the result goes back to the AI once to be phrased in character.
+   Lists need no second trip: the program writes the confirmation, as it does for timers.
+   Without an API key (or with the budget spent and blocked), offlineSkill() understands the
+   plain forms ("what's 15% of 80", "5 km in miles", "weather tomorrow") and answers in stock lines.
+   ========================================================= */
+const SKILL_ACTIONS = ["calculate", "convert", "date_math", "weather", "list"];
+const SKILL_NAMES = { calculate: "Calculator", convert: "Unit conversion", date_math: "Date maths", weather: "Weather", list: "Lists" };
+// 1234567.891 → "1,234,567.891"; sig = significant digits kept.
+function fmtNum(x, sig = 10) {
+  if (!Number.isFinite(x)) return String(x);
+  if (x !== 0 && (Math.abs(x) >= 1e15 || Math.abs(x) < 1e-6)) return x.toPrecision(Math.min(sig, 6)).replace(/\.?0+e/, "e");
+  return Number(x.toPrecision(sig)).toLocaleString("en-US", { maximumFractionDigits: 10 });
+}
+const andList = a => a.length <= 1 ? (a[0] || "") : a.slice(0, -1).join(", ") + " and " + a[a.length - 1];
+function skillLog(name, it, r) {
+  logEvent("skill", `${SKILL_NAMES[name]}: ${JSON.stringify(it || {}).slice(0, 160)} → ${String(r.say || r.text || "").slice(0, 300)}`);
+}
+
+/* ----- Calculator: a small recursive-descent parser. Nothing is ever run as code (no eval). ----- */
+const CALC_FN = {
+  sqrt: Math.sqrt, cbrt: Math.cbrt, abs: Math.abs, floor: Math.floor, ceil: Math.ceil, exp: Math.exp,
+  ln: Math.log, log: Math.log10, log10: Math.log10, log2: Math.log2, min: Math.min, max: Math.max,
+  sin: x => Math.sin(x * Math.PI / 180), cos: x => Math.cos(x * Math.PI / 180), tan: x => Math.tan(x * Math.PI / 180),   // degrees
+  round: (x, n = 0) => { const f = 10 ** clamp(Math.round(n), 0, 10); return Math.round(x * f) / f; }
+};
+const CALC_CONST = { pi: Math.PI, e: Math.E, tau: 2 * Math.PI };
+function calcTokens(src) {
+  let s = String(src ?? "").toLowerCase().slice(0, 300)
+    .replace(/[×✕]/g, "*").replace(/÷/g, "/").replace(/[−–—]/g, "-").replace(/\*\*/g, "^")
+    .replace(/(\d)\s*x\s*(?=[\d(.])/g, "$1*").replace(/\$|\busd\b|\bdollars?\b/g, "");
+  while (/\d,\d{3}\b/.test(s)) s = s.replace(/(\d),(\d{3})\b/, "$1$2");   // 1,000,000 → 1000000
+  const out = []; let i = 0, m;
+  while (i < s.length) {
+    const c = s[i], rest = s.slice(i);
+    if (/\s/.test(c)) { i++; continue; }
+    if ((m = rest.match(/^(?:\d+\.?\d*|\.\d+)(?:e[+-]?\d+)?/))) { out.push({ t: "num", v: parseFloat(m[0]) }); i += m[0].length; continue; }
+    if ((m = rest.match(/^[a-z]+/))) { out.push({ t: "id", v: m[0] }); i += m[0].length; continue; }
+    if ("+-*/^%()!,".includes(c)) { out.push({ t: c }); i++; continue; }
+    throw new Error(`I don't know the symbol "${c}"`);
+  }
+  if (!out.length) throw new Error("there's nothing to work out");
+  return out;
+}
+// Values carry pct: true for "15%", so "80 + 15%" means 80 plus 15 per cent of 80, and "15% of 80" is 12.
+function calcEval(src) {
+  const tk = calcTokens(src); let p = 0, depth = 0;
+  const is = t => tk[p] && tk[p].t === t, isId = v => tk[p] && tk[p].t === "id" && tk[p].v === v;
+  const take = t => { if (!is(t)) throw new Error(t === ")" ? "a bracket isn't closed" : `"${t}" was expected`); p++; };
+  function expr() {
+    let a = term();
+    while (is("+") || is("-")) {
+      const op = tk[p++].t, b = term(), bv = b.pct && !a.pct ? a.v * b.v : b.v;
+      a = { v: op === "+" ? a.v + bv : a.v - bv };
+    }
+    return a;
+  }
+  function term() {
+    let a = unary();
+    for (;;) {
+      if (is("*") || is("/")) {
+        const op = tk[p++].t, b = unary();
+        if (op === "/" && b.v === 0) throw new Error("that divides by zero");
+        a = { v: op === "*" ? a.v * b.v : a.v / b.v };
+      } else if (isId("of")) { p++; a = { v: a.v * unary().v }; }
+      else if (tk[p] && (tk[p].t === "(" || tk[p].t === "num" || tk[p].t === "id")) a = { v: a.v * unary().v };   // 2pi, 3(4+1)
+      else return a;
+    }
+  }
+  function unary() {
+    if (is("-")) { p++; const a = unary(); return { v: -a.v, pct: a.pct }; }
+    if (is("+")) { p++; return unary(); }
+    const a = postfix();
+    if (is("^")) { p++; return { v: Math.pow(a.v, unary().v) }; }   // right to left: 2^3^2 = 2^9
+    return a;
+  }
+  function postfix() {
+    let a = primary();
+    for (;;) {
+      if (is("%")) { p++; a = { v: a.v / 100, pct: true }; }
+      else if (is("!")) {
+        p++;
+        if (!Number.isInteger(a.v) || a.v < 0 || a.v > 170) throw new Error("a factorial needs a whole number up to 170");
+        let f = 1; for (let k = 2; k <= a.v; k++) f *= k; a = { v: f };
+      } else return a;
+    }
+  }
+  function primary() {
+    if (++depth > 60) throw new Error("that is nested too deeply");
+    try {
+      const t = tk[p];
+      if (!t) throw new Error("it stops before the end");
+      if (t.t === "num") { p++; return { v: t.v }; }
+      if (t.t === "(") { p++; const a = expr(); take(")"); return { v: a.v, pct: a.pct }; }
+      if (t.t === "id") {
+        p++;
+        if (Object.hasOwn(CALC_CONST, t.v)) return { v: CALC_CONST[t.v] };
+        const fn = Object.hasOwn(CALC_FN, t.v) ? CALC_FN[t.v] : null;
+        if (!fn) throw new Error(`I don't know "${t.v}"`);
+        const args = [];
+        if (is("(")) { p++; if (!is(")")) { args.push(expr().v); while (is(",")) { p++; args.push(expr().v); } } take(")"); }
+        else args.push(postfix().v);                                  // "sqrt 16"
+        return { v: fn(...args) };
+      }
+      throw new Error(`"${t.t}" is in the wrong place`);
+    } finally { depth--; }
+  }
+  const r = expr();
+  if (p < tk.length) throw new Error(`I couldn't follow it from "${tk[p].v ?? tk[p].t}" on`);
+  if (!Number.isFinite(r.v)) throw new Error("the answer isn't a finite number");
+  return r.v;
+}
+function calcSkill(it) {
+  const a = addr(), expr = String(it.expression ?? it.expr ?? "").trim().slice(0, 300);
+  try {
+    const v = calcEval(expr);
+    return { ok: true, text: `${expr} = ${fmtNum(v)}`, plain: `That comes to ${fmtNum(v)}, ${a}.` };
+  } catch (e) {
+    return { text: `The calculator could not work out "${expr}": ${e.message}.`, plain: `I couldn't make sense of that sum, ${a}: ${e.message}.` };
+  }
+}
+
+/* ----- Unit conversion. US customary units first: a plain "cup", "pint", "gallon", "ton" or
+   "calorie" means the American (food) one. ----- */
+const UNITS = {}, UNIT_ALIAS = {};
+[ // [kind, size in the kind's base unit (m, kg, L, m², m/s, s, byte, J, W, Pa), singular, plural, other names]
+  ["length", 0.001, "millimeter", "millimeters", "mm"], ["length", 0.01, "centimeter", "centimeters", "cm"],
+  ["length", 1, "meter", "meters", "m"], ["length", 1000, "kilometer", "kilometers", "km|kms|klick|klicks"],
+  ["length", 0.0254, "inch", "inches", "in"], ["length", 0.3048, "foot", "feet", "ft"], ["length", 0.9144, "yard", "yards", "yd|yds"],
+  ["length", 1609.344, "mile", "miles", "mi"], ["length", 1852, "nautical mile", "nautical miles", "nmi"],
+  ["mass", 1e-6, "milligram", "milligrams", "mg"], ["mass", 0.001, "gram", "grams", "g|gm|gms"],
+  ["mass", 1, "kilogram", "kilograms", "kg|kgs|kilo|kilos"], ["mass", 0.028349523125, "ounce", "ounces", "oz"],
+  ["mass", 0.45359237, "pound", "pounds", "lb|lbs"], ["mass", 6.35029318, "stone", "stone", "st|stones"],
+  ["mass", 907.18474, "ton", "tons", "short ton|short tons|us ton|us tons"], ["mass", 1000, "metric ton", "metric tons", "tonne|tonnes"],
+  ["volume", 0.001, "milliliter", "milliliters", "ml|mls|cc"], ["volume", 1, "liter", "liters", "l|ltr|ltrs"],
+  ["volume", 0.00492892159375, "teaspoon", "teaspoons", "tsp|tsps"], ["volume", 0.01478676478125, "tablespoon", "tablespoons", "tbsp|tbsps|tbs"],
+  ["volume", 0.0295735295625, "fluid ounce", "fluid ounces", "fl oz|floz|fl ounce|fl ounces"],
+  ["volume", 0.2365882365, "cup", "cups", "us cup|us cups"], ["volume", 0.473176473, "pint", "pints", "pt|pts|us pint|us pints"],
+  ["volume", 0.946352946, "quart", "quarts", "qt|qts|us quart|us quarts"], ["volume", 3.785411784, "gallon", "gallons", "gal|gals|us gallon|us gallons"],
+  ["volume", 0.56826125, "imperial pint", "imperial pints", "uk pint|uk pints"], ["volume", 4.54609, "imperial gallon", "imperial gallons", "uk gallon|uk gallons"],
+  ["volume", 0.016387064, "cubic inch", "cubic inches", "cu in|cu inch|cu inches|in3"], ["volume", 28.316846592, "cubic foot", "cubic feet", "cu ft|cu foot|cu feet|ft3"],
+  ["volume", 1000, "cubic meter", "cubic meters", "cu m|cu meter|cu meters|m3"],
+  ["area", 0.00064516, "square inch", "square inches", "sq in|sq inch|sq inches|in2"], ["area", 0.09290304, "square foot", "square feet", "sq ft|sqft|sq foot|sq feet|ft2"],
+  ["area", 0.83612736, "square yard", "square yards", "sq yd|sq yard|sq yards|yd2"], ["area", 1, "square meter", "square meters", "sq m|sqm|sq meter|sq meters|m2"],
+  ["area", 1e6, "square kilometer", "square kilometers", "sq km|sq kilometer|sq kilometers|km2"],
+  ["area", 2589988.110336, "square mile", "square miles", "sq mi|sq mile|sq miles|mi2"], ["area", 4046.8564224, "acre", "acres", "ac"],
+  ["area", 10000, "hectare", "hectares", "ha"],
+  ["speed", 0.44704, "mile per hour", "miles per hour", "mph|mi/h|mile/hour|miles/hour|mile/h|miles/h"],
+  ["speed", 1 / 3.6, "kilometer per hour", "kilometers per hour", "km/h|kph|kmh|kmph|kilometer/hour|kilometers/hour|km/hour"],
+  ["speed", 1, "meter per second", "meters per second", "m/s|mps|meter/second|meters/second"],
+  ["speed", 0.3048, "foot per second", "feet per second", "ft/s|fps|foot/second|feet/second"], ["speed", 1852 / 3600, "knot", "knots", "kn|kt|kts"],
+  ["time", 0.001, "millisecond", "milliseconds", "ms"], ["time", 1, "second", "seconds", "s|sec|secs"], ["time", 60, "minute", "minutes", "min|mins"],
+  ["time", 3600, "hour", "hours", "h|hr|hrs"], ["time", 86400, "day", "days", "d"], ["time", 604800, "week", "weeks", "wk|wks"],
+  ["time", 2629746, "month", "months", "mo|mos"], ["time", 31556952, "year", "years", "yr|yrs"],
+  ["data", 0.125, "bit", "bits", "bit"], ["data", 1, "byte", "bytes", "byte"], ["data", 1e3, "kilobyte", "kilobytes", "kb|kbs"],
+  ["data", 1e6, "megabyte", "megabytes", "mb|mbs|meg|megs"], ["data", 1e9, "gigabyte", "gigabytes", "gb|gbs|gig|gigs"],
+  ["data", 1e12, "terabyte", "terabytes", "tb|tbs"], ["data", 1024, "kibibyte", "kibibytes", "kib"],
+  ["data", 1048576, "mebibyte", "mebibytes", "mib"], ["data", 1073741824, "gibibyte", "gibibytes", "gib"],
+  ["energy", 1, "joule", "joules", "j"], ["energy", 1000, "kilojoule", "kilojoules", "kj"],
+  ["energy", 4184, "calorie", "calories", "kcal|cal|cals|kilocalorie|kilocalories|food calorie|food calories"],
+  ["energy", 4.184, "small calorie", "small calories", "gram calorie|gram calories"], ["energy", 3600, "watt hour", "watt hours", "wh"],
+  ["energy", 3.6e6, "kilowatt hour", "kilowatt hours", "kwh|kilowatt-hour|kilowatt-hours"], ["energy", 1055.05585262, "BTU", "BTUs", "btu|btus"],
+  ["power", 1, "watt", "watts", "w"], ["power", 1000, "kilowatt", "kilowatts", "kw"], ["power", 745.69987158227, "horsepower", "horsepower", "hp"],
+  ["pressure", 1, "pascal", "pascals", "pa"], ["pressure", 1000, "kilopascal", "kilopascals", "kpa"],
+  ["pressure", 100, "millibar", "millibars", "mbar|hpa|hectopascal|hectopascals"], ["pressure", 1e5, "bar", "bars", "bar"],
+  ["pressure", 6894.757293168, "psi", "psi", "pound per square inch|pounds per square inch"], ["pressure", 101325, "atmosphere", "atmospheres", "atm"],
+  ["pressure", 3386.389, "inch of mercury", "inches of mercury", "inhg|in hg"], ["pressure", 133.322387415, "millimeter of mercury", "millimeters of mercury", "mmhg|mm hg"],
+  ["temperature", "c", "degree Celsius", "degrees Celsius", "c|celsius|centigrade"],
+  ["temperature", "f", "degree Fahrenheit", "degrees Fahrenheit", "f|fahrenheit"], ["temperature", "k", "kelvin", "kelvins", "k"]
+].forEach(([kind, size, one, many, other]) => {
+  const u = kind === "temperature" ? { kind, temp: size, one, many } : { kind, size, one, many };
+  UNITS[one] = u;
+  [one, many, ...other.split("|")].forEach(n => UNIT_ALIAS[n.toLowerCase()] = u);
+});
+// When only "from" is given: metric goes to US units, US units to metric.
+const UNIT_PAIR = { kilometer: "mile", mile: "kilometer", meter: "foot", foot: "meter", centimeter: "inch", inch: "centimeter",
+  millimeter: "inch", yard: "meter", "nautical mile": "mile", kilogram: "pound", pound: "kilogram", gram: "ounce", ounce: "gram",
+  milligram: "ounce", stone: "pound", "metric ton": "ton", ton: "metric ton", liter: "quart", quart: "liter", gallon: "liter", pint: "liter",
+  milliliter: "fluid ounce", "fluid ounce": "milliliter", cup: "milliliter", tablespoon: "milliliter", teaspoon: "milliliter",
+  "imperial pint": "pint", "imperial gallon": "gallon", "cubic meter": "cubic foot", "cubic foot": "cubic meter",
+  "square meter": "square foot", "square foot": "square meter", "square kilometer": "square mile", "square mile": "square kilometer",
+  hectare: "acre", acre: "hectare", "kilometer per hour": "mile per hour", "mile per hour": "kilometer per hour",
+  "meter per second": "mile per hour", knot: "mile per hour", "degree Celsius": "degree Fahrenheit", "degree Fahrenheit": "degree Celsius",
+  kelvin: "degree Fahrenheit", kilojoule: "calorie", calorie: "kilojoule", joule: "calorie", kilopascal: "psi", bar: "psi", psi: "bar",
+  millibar: "inch of mercury", kilowatt: "horsepower", horsepower: "kilowatt" };
+function unitFind(s) {
+  const k = String(s ?? "").toLowerCase().replace(/[°º]/g, " deg ").replace(/\./g, "").replace(/\b(?:degrees?|deg)\b/g, " ")
+    .replace(/\bsquare\b/g, "sq").replace(/\bcubic\b/g, "cu").replace(/\bper\b/g, "/").replace(/metre/g, "meter").replace(/litre/g, "liter")
+    .replace(/\s*\/\s*/g, "/").replace(/\s+/g, " ").trim();
+  return UNIT_ALIAS[k] || UNIT_ALIAS[k.replace(/es$/, "")] || UNIT_ALIAS[k.replace(/s$/, "")] || null;
+}
+const toKelvin = (v, t) => t === "c" ? v + 273.15 : t === "f" ? (v - 32) * 5 / 9 + 273.15 : v;
+const fromKelvin = (v, t) => t === "c" ? v - 273.15 : t === "f" ? (v - 273.15) * 9 / 5 + 32 : v;
+const qtyText = (v, u, sig = 4) => `${fmtNum(v, sig)} ${Math.abs(v) === 1 ? u.one : u.many}`;
+function convertSkill(it) {
+  const a = addr(), value = Number(String(it.value ?? it.amount ?? "").replace(/,/g, ""));
+  let from = unitFind(it.from), to = it.to ? unitFind(it.to) : null;
+  if (!Number.isFinite(value)) return { text: `No number was given to convert.`, plain: `How much, ${a}?` };
+  if (!from) return { text: `The unit "${it.from}" isn't one the converter knows.`, plain: `I don't know the unit "${it.from}", ${a}.` };
+  if (it.to && !to) return { text: `The unit "${it.to}" isn't one the converter knows.`, plain: `I don't know the unit "${it.to}", ${a}.` };
+  if (!to) to = UNITS[UNIT_PAIR[from.one]] || null;
+  if (!to) return { text: `No unit to convert ${from.many} into was given.`, plain: `Into what, ${a}?` };
+  // "Ounces" of a liquid: the fluid ounce was meant.
+  if (from.one === "ounce" && to.kind === "volume") from = UNITS["fluid ounce"];
+  if (to.one === "ounce" && from.kind === "volume") to = UNITS["fluid ounce"];
+  if (from.kind !== to.kind)
+    return { text: `${from.many} (${from.kind}) can't be converted to ${to.many} (${to.kind}): they measure different things. Weight-to-volume needs the density of the ingredient.`,
+             plain: `${cap1(from.many)} and ${to.many} measure different things, ${a}. I can't convert one into the other.` };
+  const out = from.kind === "temperature" ? fromKelvin(toKelvin(value, from.temp), to.temp) : value * from.size / to.size;
+  const lhs = qtyText(value, from, 10), rhs = qtyText(out, to);
+  return { ok: true, text: `${lhs} = ${rhs}`, plain: `${cap1(lhs)} is ${rhs}, ${a}.` };
+}
+
+/* ----- Date maths: the AI works out which dates are meant; the counting is done here. ----- */
+function skillDate(s) {
+  if (s == null || s === "") return null;
+  s = String(s).trim().toLowerCase();
+  const now = new Date(), t0 = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  if (s === "today" || s === "now") return t0;
+  if (s === "tomorrow") return new Date(t0.getFullYear(), t0.getMonth(), t0.getDate() + 1);
+  let m = s.match(/^(\d{4})-(\d{1,2})-(\d{1,2})/);
+  if (m) { const d = new Date(+m[1], +m[2] - 1, +m[3]); return d.getMonth() === +m[2] - 1 ? d : null; }
+  if ((m = s.match(/^(?:--)?(\d{1,2})-(\d{1,2})$/))) {                  // "12-25": the next one
+    let d = new Date(t0.getFullYear(), +m[1] - 1, +m[2]);
+    if (d < t0) d = new Date(t0.getFullYear() + 1, +m[1] - 1, +m[2]);
+    return d.getDate() === +m[2] ? d : null;
+  }
+  return whenDate(s);
+}
+// A spoken date for the offline forms: "christmas", "thanksgiving", "july 4th", "friday", "14 march 2027".
+function whenDate(s) {
+  const now = new Date(), y = now.getFullYear(), t0 = new Date(y, now.getMonth(), now.getDate());
+  s = String(s).toLowerCase().replace(/[?.!]+$/, "").replace(/^(?:the |next |this )/, "").trim();
+  const next = (mo, d) => { const x = new Date(y, mo, d); return x < t0 ? new Date(y + 1, mo, d) : x; };
+  const thanks = yr => { const n = new Date(yr, 10, 1); return new Date(yr, 10, 1 + ((4 - n.getDay() + 7) % 7) + 21); };   // 4th Thursday of November
+  const fixed = [[/^christmas eve$/, 11, 24], [/^christmas(?: day)?$|^xmas$/, 11, 25], [/^new year'?s eve$/, 11, 31],
+    [/^new year'?s?(?: day)?$/, 0, 1], [/^halloween$/, 9, 31], [/^valentine'?s?(?: day)?$/, 1, 14], [/^(?:independence day|the fourth of july|fourth of july|july 4th)$/, 6, 4],
+    [/^st\.? patrick'?s(?: day)?$/, 2, 17]];
+  for (const [re, mo, d] of fixed) if (re.test(s)) return next(mo, d);
+  if (/^thanksgiving(?: day)?$/.test(s)) { const d = thanks(y); return d < t0 ? thanks(y + 1) : d; }
+  const p = parseDay(timeText(s), now);
+  return p ? p.date : null;
+}
+const longDate = d => d.toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric", year: "numeric" });
+const dayDiff = (a, b) => Math.round((Date.UTC(b.getFullYear(), b.getMonth(), b.getDate()) - Date.UTC(a.getFullYear(), a.getMonth(), a.getDate())) / DAY_MS);
+const plural = (n, w) => `${fmtNum(n)} ${w}${Math.abs(n) === 1 ? "" : "s"}`;
+function weeksText(n) {
+  n = Math.abs(n); const w = Math.floor(n / 7), d = n % 7;
+  return n >= 14 ? ` (${plural(w, "week")}${d ? " and " + plural(d, "day") : ""})` : "";
+}
+function dateSkill(it) {
+  const a = addr(), op = String(it.op || it.operation || "days_until").toLowerCase().replace(/[\s-]+/g, "_");
+  const now = new Date(), t0 = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const d1 = skillDate(it.date), d2 = skillDate(it.date2 ?? it.to);
+  const bad = which => ({ text: `The date "${which}" couldn't be read; dates should be YYYY-MM-DD.`, plain: `I couldn't make out that date, ${a}.` });
+  if (op === "day_of_week" || op === "weekday") {
+    if (!d1) return bad(it.date);
+    const wd = d1.toLocaleDateString("en-US", { weekday: "long" }), past = d1 < t0;
+    return { ok: true, text: `${longDate(d1)} ${past ? "was" : "is"} a ${wd}.`, plain: `${d1.toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" })} ${past ? "was" : "is"} a ${wd}, ${a}.` };
+  }
+  if (op === "days_between" || op === "between") {
+    if (!d1) return bad(it.date); if (!d2) return bad(it.date2);
+    const n = Math.abs(dayDiff(d1, d2));
+    return { ok: true, text: `From ${longDate(d1)} to ${longDate(d2)}: ${plural(n, "day")}${weeksText(n)}.`, plain: `${cap1(plural(n, "day"))} between them, ${a}.` };
+  }
+  if (/^add/.test(op) || op === "subtract_days") {
+    const base = d1 || t0, sign = op === "subtract_days" ? -1 : 1;
+    const days = (Number(it.days) || 0) + 7 * (Number(it.weeks) || 0), months = Number(it.months) || 0;
+    const r = new Date(base.getFullYear(), base.getMonth() + sign * months, base.getDate() + sign * days);
+    const what = [months && plural(months, "month"), days && plural(days, "day")].filter(Boolean).join(" and ") || "nothing";
+    return { ok: true, text: `${longDate(base)} ${sign > 0 ? "plus" : "minus"} ${what} is ${longDate(r)}.`, plain: `That would be ${longDate(r)}, ${a}.` };
+  }
+  if (!d1) return bad(it.date);                                         // days_until
+  const n = dayDiff(t0, d1);
+  if (n === 0) return { ok: true, text: `${longDate(d1)} is today.`, plain: `That's today, ${a}.` };
+  return n > 0
+    ? { ok: true, text: `From today (${longDate(t0)}) to ${longDate(d1)}: ${plural(n, "day")}${weeksText(n)}.`, plain: `${cap1(plural(n, "day"))} until ${longDate(d1)}, ${a}.` }
+    : { ok: true, text: `${longDate(d1)} was ${plural(-n, "day")} ago${weeksText(n)}.`, plain: `That was ${plural(-n, "day")} ago, ${a}.` };
+}
+
+/* ----- Weather: Open-Meteo, free and keyless. The "Home town" setting (brain.homeCity) is geocoded
+   once and its coordinates kept (brain.homeGeo); a forecast is cached for 30 minutes. Fahrenheit, mph. ----- */
+const WX_TTL_MS = 30 * MIN, WX_KEY = "winslowWeather";
+const WX_CODES = { 0: "clear skies", 1: "mostly clear skies", 2: "partly cloudy skies", 3: "overcast skies", 45: "fog", 48: "freezing fog",
+  51: "light drizzle", 53: "drizzle", 55: "heavy drizzle", 56: "freezing drizzle", 57: "heavy freezing drizzle", 61: "light rain", 63: "rain",
+  65: "heavy rain", 66: "freezing rain", 67: "heavy freezing rain", 71: "light snow", 73: "snow", 75: "heavy snow", 77: "snow grains",
+  80: "light showers", 81: "showers", 82: "violent showers", 85: "snow showers", 86: "heavy snow showers", 95: "thunderstorms",
+  96: "thunderstorms with hail", 99: "thunderstorms with heavy hail" };
+const wxWords = c => WX_CODES[c] || "unsettled weather";
+const US_STATES = Object.fromEntries(("al:alabama,ak:alaska,az:arizona,ar:arkansas,ca:california,co:colorado,ct:connecticut,de:delaware,fl:florida," +
+  "ga:georgia,hi:hawaii,id:idaho,il:illinois,in:indiana,ia:iowa,ks:kansas,ky:kentucky,la:louisiana,me:maine,md:maryland,ma:massachusetts," +
+  "mi:michigan,mn:minnesota,ms:mississippi,mo:missouri,mt:montana,ne:nebraska,nv:nevada,nh:new hampshire,nj:new jersey,nm:new mexico," +
+  "ny:new york,nc:north carolina,nd:north dakota,oh:ohio,ok:oklahoma,or:oregon,pa:pennsylvania,ri:rhode island,sc:south carolina," +
+  "sd:south dakota,tn:tennessee,tx:texas,ut:utah,vt:vermont,va:virginia,wa:washington,wv:west virginia,wi:wisconsin,wy:wyoming," +
+  "dc:district of columbia,usa:us,united states:us,uk:gb,england:gb,scotland:gb,wales:gb,britain:gb,great britain:gb,united kingdom:gb")
+  .split(",").map(p => p.split(":")));
+let wxCache = {}, geoMem = {};
+try { const c = JSON.parse(localStorage.getItem(WX_KEY) || "{}"); if (c && typeof c === "object") wxCache = c; } catch {}
+async function getJson(url, ms = 8000) {
+  const ctl = new AbortController(), tm = setTimeout(() => ctl.abort(), ms);
+  try {
+    const r = await fetch(url, { signal: ctl.signal, cache: "no-store" });
+    if (!r.ok) throw new Error("HTTP " + r.status);
+    return await r.json();
+  } catch (e) { throw new Error(e.name === "AbortError" ? "it took too long" : e.message); }
+  finally { clearTimeout(tm); }
+}
+// "Springfield, MA" → the Springfield in Massachusetts. Null if Open-Meteo knows no such place.
+async function geocode(q) {
+  q = String(q || "").trim().slice(0, 80);
+  if (!q) return null;
+  const key = q.toLowerCase();
+  if (geoMem[key]) return geoMem[key];
+  const parts = q.split(",").map(s => s.trim()).filter(Boolean);
+  const data = await getJson(`https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(parts[0])}&count=10&language=en&format=json`);
+  const list = Array.isArray(data && data.results) ? data.results.filter(r => Number.isFinite(+r.latitude) && Number.isFinite(+r.longitude)) : [];
+  if (!list.length) return null;
+  let best = list[0];
+  const qual = parts.slice(1).join(" ").toLowerCase().replace(/\./g, "").trim();
+  if (qual) {
+    const want = US_STATES[qual] || qual, low = v => String(v || "").toLowerCase();
+    best = list.find(r => [r.admin1, r.country, r.country_code].some(v => low(v) === want)) ||
+           list.find(r => [r.admin1, r.admin2, r.country].some(v => low(v).includes(want))) || list[0];
+  }
+  const g = { name: best.name, lat: +best.latitude, lon: +best.longitude, tz: best.timezone || "",
+    label: [best.name, best.admin1 && best.admin1 !== best.name ? best.admin1 : "", best.country_code === "US" ? "" : best.country].filter(Boolean).join(", ") };
+  geoMem[key] = g;
+  return g;
+}
+// The home town's coordinates, looked up once (again only when the setting changes).
+async function homeGeo() {
+  const q = String(brain.homeCity || "").trim();
+  if (!q) return null;
+  const h = brain.homeGeo;
+  if (h && h.q === q) return h.notFound ? null : h;
+  const g = await geocode(q);                                         // a network failure throws, and is tried again next time
+  brain.homeGeo = g ? { ...g, q } : { q, notFound: true };
+  save();
+  logEvent("state", g ? `Home town found: ${g.label} (${g.lat.toFixed(2)}, ${g.lon.toFixed(2)})` : `Home town "${q}" not found by Open-Meteo`);
+  return g ? brain.homeGeo : null;
+}
+async function forecast(g) {
+  const key = `${g.lat.toFixed(2)},${g.lon.toFixed(2)}`, c = wxCache[key];
+  if (c && Date.now() - c.at < WX_TTL_MS && c.data) return { data: c.data, at: c.at, cached: true };
+  const data = await getJson(`https://api.open-meteo.com/v1/forecast?latitude=${g.lat.toFixed(4)}&longitude=${g.lon.toFixed(4)}` +
+    "&current=temperature_2m,apparent_temperature,relative_humidity_2m,weather_code,wind_speed_10m" +
+    "&daily=weather_code,temperature_2m_max,temperature_2m_min,precipitation_probability_max,precipitation_sum,snowfall_sum,wind_speed_10m_max,sunrise,sunset,uv_index_max" +
+    "&temperature_unit=fahrenheit&wind_speed_unit=mph&precipitation_unit=inch&timezone=auto&forecast_days=7");
+  if (!data || !data.daily || !Array.isArray(data.daily.time)) throw new Error("the forecast came back empty");
+  const at = Date.now();
+  wxCache = Object.fromEntries(Object.entries(wxCache).filter(([, v]) => v && at - v.at < WX_TTL_MS).slice(-4));
+  wxCache[key] = { at, data };
+  try { localStorage.setItem(WX_KEY, JSON.stringify(wxCache)); } catch {}
+  return { data, at, cached: false };
+}
+const WEEKDAYS = ["sunday", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday"];
+function wxDayIndex(daily, day) {
+  const s = String(day || "today").toLowerCase().trim();
+  if (!s || s === "today" || s === "tonight" || s === "now") return 0;
+  if (s === "tomorrow") return 1;
+  let i = daily.time.indexOf(s.slice(0, 10));
+  if (i >= 0) return i;
+  const wd = WEEKDAYS.indexOf(s.replace(/^(?:on |this |next )/, ""));
+  if (wd >= 0) { i = daily.time.findIndex(t => new Date(t + "T12:00").getDay() === wd); return i; }
+  return -1;
+}
+const r0 = n => Math.round(Number(n));
+const hhmm = iso => { const m = String(iso || "").match(/T(\d{2}):(\d{2})/); if (!m) return ""; const h = +m[1]; return `${h % 12 || 12}:${m[2]} ${h < 12 ? "AM" : "PM"}`; };
+// { text (for the AI), plain (a stock spoken line), bad, good }
+function weatherReport(g, fc, i) {
+  const d = fc.data.daily, c = fc.data.current, at = (k, j = i) => (d[k] || [])[j];
+  const code = at("weather_code"), pp = r0(at("precipitation_probability_max")), rain = Number(at("precipitation_sum")) || 0, snow = Number(at("snowfall_sum")) || 0;
+  const snowy = snow > 0 || [71, 73, 75, 77, 85, 86].includes(code), wet = snowy ? "snow" : "rain";
+  const dayName = i === 0 ? "Today" : i === 1 ? "Tomorrow" : new Date(at("time") + "T12:00").toLocaleDateString("en-US", { weekday: "long" });
+  const lines = [`Weather for ${g.label} from Open-Meteo (degrees Fahrenheit, mph, inches; as of ${new Date(fc.at).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}).`];
+  if (i === 0 && c) lines.push(`Right now: ${r0(c.temperature_2m)}°F (feels like ${r0(c.apparent_temperature)}°F), ${wxWords(c.weather_code)}, wind ${r0(c.wind_speed_10m)} mph, humidity ${r0(c.relative_humidity_2m)}%.`);
+  const dayLine = j => `${j === i ? dayName : "Tomorrow"} (${new Date((d.time || [])[j] + "T12:00").toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric" })}): ` +
+    `${wxWords(at("weather_code", j))}, high ${r0(at("temperature_2m_max", j))}°F, low ${r0(at("temperature_2m_min", j))}°F, ` +
+    `${r0(at("precipitation_probability_max", j))}% chance of precipitation` + (Number(at("precipitation_sum", j)) > 0 ? ` (about ${Number(at("precipitation_sum", j)).toFixed(2)} in)` : "") +
+    (Number(at("snowfall_sum", j)) > 0 ? `, snowfall about ${Number(at("snowfall_sum", j)).toFixed(1)} in` : "") +
+    `, wind up to ${r0(at("wind_speed_10m_max", j))} mph, UV index ${Math.round(Number(at("uv_index_max", j)) || 0)}, sunrise ${hhmm(at("sunrise", j))}, sunset ${hhmm(at("sunset", j))}.`;
+  lines.push(dayLine(i));
+  if (i === 0 && d.time.length > 1) lines.push(dayLine(1));
+  const chance = pp >= 30 ? `, and a ${pp} percent chance of ${wet}` : rain > 0.04 ? `, with a little ${wet} about` : "";
+  const plain = i === 0 && c
+    ? `${g.name}: ${r0(c.temperature_2m)} degrees and ${wxWords(c.weather_code)} just now, with a high of ${r0(at("temperature_2m_max"))} and a low of ${r0(at("temperature_2m_min"))}${chance}.`
+    : `${dayName} in ${g.name}: ${wxWords(code)}, a high of ${r0(at("temperature_2m_max"))} and a low of ${r0(at("temperature_2m_min"))}${chance}.`;
+  return { ok: true, text: lines.join("\n"), plain, bad: code >= 51 || pp >= 60, good: code <= 1 && pp < 20 };
+}
+async function weatherSkill(it) {
+  const a = addr();
+  let place = typeof it.place === "string" ? it.place.trim().slice(0, 80) : "";
+  if (/^(?:home|here|my (?:town|city|area)|local|null|none)?$/i.test(place) || (brain.homeCity && place.toLowerCase() === String(brain.homeCity).toLowerCase())) place = "";
+  let g;
+  try { g = place ? await geocode(place) : await homeGeo(); }
+  catch (e) { return { text: `The weather service (Open-Meteo) couldn't be reached: ${e.message}.`, plain: `The weather service isn't answering just now, ${a}.` }; }
+  if (!g) return place
+    ? { text: `Open-Meteo knows no place called "${place}". Ask your human which town they mean, perhaps with its state.`, plain: `I can't find a place called ${place}, ${a}.` }
+    : brain.homeCity
+      ? { text: `The home town in settings ("${brain.homeCity}") wasn't found by Open-Meteo. Suggest adding the state, such as "Springfield, MA".`, plain: `I couldn't find ${brain.homeCity} on the map, ${a}. Adding the state in my settings should help.` }
+      : { text: `No home town is set, so there is no place to give the weather for. Ask which town, or suggest setting "Home town" in settings.`, plain: `I don't know where home is yet, ${a}. Put your town in my settings, or name one.` };
+  let fc;
+  try { fc = await forecast(g); }
+  catch (e) { return { text: `The weather service (Open-Meteo) couldn't be reached: ${e.message}.`, plain: `The weather service isn't answering just now, ${a}.` }; }
+  const i = wxDayIndex(fc.data.daily, it.day);
+  if (i < 0) {
+    const last = fc.data.daily.time[fc.data.daily.time.length - 1];
+    return { text: `The forecast only reaches ${last} (7 days); "${it.day}" is beyond it or unclear.`, plain: `My forecast only reaches a week ahead, ${a}.` };
+  }
+  return weatherReport(g, fc, i);
+}
+
+/* ----- Lists: named lists ("shopping", "to do") kept in brain.lists and shown on the Notes tab.
+   [{ name, items: [{ text, t }], t }] ----- */
+const LISTS_MAX = 20, LIST_ITEMS_MAX = 100;
+function listsAll() { if (!Array.isArray(brain.lists)) brain.lists = []; return brain.lists; }
+function listKey(name) {
+  return String(name || "").toLowerCase().replace(/[^a-z0-9' -]/g, " ").replace(/\b(?:my|the|our|a|an|list|lists)\b/g, " ")
+    .replace(/\s+/g, " ").trim().slice(0, 30);
+}
+const listTitle = l => capFirst(l.name) + " list";
+function findList(name, make) {
+  let k = listKey(name);
+  if (!k) {                                                             // no name: the list last used, else "shopping"
+    const recent = listsAll().slice().sort((x, y) => y.t - x.t)[0];
+    k = recent ? recent.name : "shopping";
+  }
+  let l = listsAll().find(x => x.name === k);
+  if (!l && make) {
+    l = { name: k, items: [], t: Date.now() };
+    listsAll().push(l);
+    if (brain.lists.length > LISTS_MAX) brain.lists = brain.lists.sort((x, y) => y.t - x.t).slice(0, LISTS_MAX);
+  }
+  return l || { name: k, items: [], t: 0, missing: true };
+}
+function listItemsFrom(x) {
+  const raw = Array.isArray(x) ? x.map(String) : String(x || "").split(/\s*[,;]\s*|\s+and\s+|\s*&\s*/);
+  return raw.flatMap(s => s.split(/\s*,\s*/)).map(s => s.replace(/^(?:and |some |a few |a |an |the )/i, "").replace(/[.!?]+$/, "").trim().slice(0, 80)).filter(Boolean);
+}
+const sameItem = (a, b) => { const n = s => s.toLowerCase().replace(/(?:es|s)$/, ""); return n(a) === n(b); };
+// The line he says. The AI's "list" action and the voice commands both come here.
+function listSkill(it) {
+  const a = addr(), op = String(it.op || "read").toLowerCase(), items = listItemsFrom(it.items ?? it.item);
+  const changed = l => { l.t = Date.now(); save(); if (dashIsOpen() && dashTab === "notes") renderNotes(); };
+  if (op === "lists" || op === "list_all") {
+    const ls = listsAll().filter(l => l.items.length);
+    return ls.length ? `You have ${andList(ls.map(l => `the ${l.name} list (${l.items.length})`))}, ${a}.` : `You have no lists as yet, ${a}.`;
+  }
+  const l = findList(it.name, op === "add");
+  const title = `the ${l.name} list`;
+  if (op === "add") {
+    if (!items.length) return `What shall I add, ${a}?`;
+    const added = [], had = [];
+    for (const x of items) {
+      if (l.items.some(y => sameItem(y.text, x))) had.push(x);
+      else if (l.items.length < LIST_ITEMS_MAX) { l.items.push({ text: x, t: Date.now() }); added.push(x); }
+    }
+    changed(l);
+    logEvent("skill", `List "${l.name}": added ${added.join(", ") || "nothing new"}`);
+    if (!added.length) return `${cap1(andList(had))} ${had.length === 1 ? "is" : "are"} already on ${title}, ${a}.`;
+    return `${cap1(andList(added))}, on ${title}, ${a}.` + (had.length ? ` ${cap1(andList(had))} ${had.length === 1 ? "was" : "were"} there already.` : "") +
+      (l.items.length > 1 ? ` That makes ${numWords(l.items.length)}.` : "");
+  }
+  if (op === "remove") {
+    if (!items.length) return `What shall I take off, ${a}?`;
+    const gone = [], missing = [];
+    for (const x of items) {
+      const i = l.items.findIndex(y => sameItem(y.text, x) || y.text.toLowerCase().includes(x.toLowerCase()));
+      if (i >= 0) gone.push(l.items.splice(i, 1)[0].text); else missing.push(x);
+    }
+    if (gone.length) { changed(l); logEvent("skill", `List "${l.name}": removed ${gone.join(", ")}`); }
+    if (!gone.length) return `I can't find ${andList(missing)} on ${title}, ${a}.`;
+    return `${cap1(andList(gone))}, off ${title}, ${a}.` + (missing.length ? ` I couldn't find ${andList(missing)}.` : "") +
+      (l.items.length ? "" : " The list is empty now.");
+  }
+  if (op === "clear") {
+    const n = l.items.length;
+    brain.lists = listsAll().filter(x => x !== l); save();
+    if (dashIsOpen() && dashTab === "notes") renderNotes();
+    if (n) logEvent("skill", `List "${l.name}": cleared ${n} item${n === 1 ? "" : "s"}`);
+    return n ? `${cap1(title)} is cleared, ${a}. ${cap1(numWords(n))} item${n === 1 ? "" : "s"} gone.` : `${cap1(title)} was already empty, ${a}.`;
+  }
+  // read
+  if (!l.items.length) return `${cap1(title)} is empty, ${a}.`;
+  setTimeout(() => openDashboard("notes"), 300);
+  const names = l.items.map(x => x.text);
+  return names.length <= 6 ? `${cap1(title)}, ${a}: ${andList(names)}. It's on screen too.`
+                           : `${cap1(numWords(names.length))} items on ${title}, ${a}. I've put it on screen.`;
+}
+function listsPromptText() {
+  const ls = listsAll().filter(l => l.items.length);
+  return ls.length ? ls.map(l => `${l.name} (${l.items.slice(0, 12).map(x => x.text).join(", ")}${l.items.length > 12 ? `, and ${l.items.length - 12} more` : ""})`).join("; ") : "none yet.";
+}
+function listsHtml() {
+  return listsAll().filter(l => l.items.length).sort((x, y) => y.t - x.t).map(l =>
+    `<article class="note list"><div class="note-head"><span class="tkind">List</span><h3>${esc(listTitle(l))}</h3>` +
+    `<button class="note-copy" data-lcopy="${esc(l.name)}" aria-label="Copy this list">Copy</button></div><ul class="litems">` +
+    l.items.map((x, i) => `<li><span>${esc(x.text)}</span><button class="ldel" data-list="${esc(l.name)}" data-i="${i}" aria-label="Take ${esc(x.text)} off the list">` +
+      `<svg class="icon" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg></button></li>`).join("") + `</ul></article>`).join("");
+}
+$("noteList").addEventListener("click", async e => {
+  const del = e.target.closest(".ldel"), cp = e.target.closest("[data-lcopy]");
+  if (del) {
+    const l = listsAll().find(x => x.name === del.dataset.list), x = l && l.items[+del.dataset.i];
+    if (!x) return;
+    l.items.splice(+del.dataset.i, 1); l.t = Date.now();
+    if (!l.items.length) brain.lists = listsAll().filter(y => y !== l);
+    save(); logEvent("skill", `List "${l.name}": removed ${x.text} (tapped)`); renderNotes();
+  } else if (cp) {
+    const l = listsAll().find(x => x.name === cp.dataset.lcopy); if (!l) return;
+    try { await navigator.clipboard.writeText(listTitle(l) + "\n" + l.items.map(x => "- " + x.text).join("\n")); cp.textContent = "Copied"; }
+    catch { cp.textContent = "Couldn't copy"; }
+    setTimeout(() => cp.textContent = "Copy", 1500);
+  }
+});
+
+// The AI asked for a skill: run it. { say } = the line to speak as is (lists); otherwise { text, plain }.
+async function runSkill(name, item) {
+  const it = item && typeof item === "object" ? item : {};
+  let r;
+  try {
+    r = name === "calculate" ? calcSkill(it) : name === "convert" ? convertSkill(it) : name === "date_math" ? dateSkill(it)
+      : name === "weather" ? await weatherSkill(it) : { say: listSkill(it) };
+  } catch (err) {
+    r = { text: `The ${name} skill failed: ${err.message}.`, plain: `I'm afraid that didn't work, ${addr()}.` };
+  }
+  if (!r.say || name !== "list") skillLog(name, it, r);
+  return r;
+}
+
+/* ----- Said aloud, with or without the AI. Lists always run here (free, exact, no round trip). ----- */
+function skillWords(text) {
+  let t = String(text).toLowerCase().replace(/[“”"]/g, "").replace(/[!?]+$/, "").replace(/\.$/, "").replace(/\s+/g, " ").trim();
+  const nm = brain.name.toLowerCase().replace(/[^a-z0-9 ]/g, "").trim();
+  if (nm) t = t.replace(new RegExp(`^(?:hey |ok |okay )?${nm}\\b[, ]*`), "").replace(new RegExp(`[, ]+${nm}$`), "");
+  return t.replace(/^(?:(?:please|can you|could you|would you|will you|kindly)[, ]+)+/, "").replace(/[, ]+please$/, "").trim();
+}
+function skillAnswer(text, line) {
+  brain.history.push({ role: "user", content: text }, { role: "assistant", content: JSON.stringify({ say: line, emotion: "neutral" }) });
+  brain.history = brain.history.slice(-12);
+  countChat(false); save();
+  speak(line, () => setTimeout(() => setMood("neutral"), 1000));
+}
+const LIST_NAME = "(?:(?:my|the|our) )?(?:([a-z0-9' -]{1,30}?) )?list";
+function listCommand(text) {
+  const t = skillWords(text).replace(/[,;]+$/, "");
+  let m, it = null;
+  if ((m = t.match(new RegExp(`^(?:add|put|pop|stick|throw|write|jot down|include) (.+?) (?:on|to|onto|in|into) ${LIST_NAME}$`)))) it = { op: "add", items: m[1], name: m[2] };
+  else if ((m = t.match(new RegExp(`^(?:remove|take|cross|delete|strike|scratch) (.+?) (?:off|from|out of)(?: of)? ${LIST_NAME}$`)))) it = { op: "remove", items: m[1], name: m[2] };
+  else if ((m = t.match(new RegExp(`^(?:clear|empty|wipe|scrap|clear out) ${LIST_NAME}$`)))) it = { op: "clear", name: m[1] };
+  else if ((m = t.match(new RegExp(`^(?:what(?:'s| is) on|what(?:'s| is) in|read(?: me)?|show(?: me)?|open|tell me|go through) ${LIST_NAME}$`)))) it = { op: "read", name: m[1] };
+  else if (/^(?:what lists (?:do i have|have i got|are there|do you have)|(?:show|read)(?: me)? (?:all )?(?:my |the )?lists)$/.test(t)) it = { op: "lists" };
+  if (!it) return false;
+  skillAnswer(text, listSkill(it));
+  return true;
+}
+// "plus", "times", "squared" → symbols, for the offline calculator.
+const mathWords = t => t.replace(/\bmultiplied by\b|\btimes\b/g, "*").replace(/\bdivided by\b|\bover\b/g, "/").replace(/\bplus\b|\badded to\b/g, "+")
+  .replace(/\bminus\b|\btake away\b/g, "-").replace(/\bto the power of\b|\bto the\b/g, "^").replace(/\bsquared\b/g, "^2").replace(/\bcubed\b/g, "^3")
+  .replace(/\b(?:the )?square root of\b/g, "sqrt ").replace(/\bper ?cent\b/g, "%").replace(/\bpoint (\d)/g, ".$1").replace(/(\d) \.(\d)/g, "$1.$2");
+// Weather, sums, conversions and dates without the AI (no key, or the budget is spent and blocked). True = handled.
+function offlineSkill(text) {
+  const t = skillWords(text);
+  let m;
+  if (/\b(weather|forecast|temperature (?:outside|out there|today|tomorrow|tonight)|going to (?:rain|snow)|will it (?:rain|snow)|is it (?:cold|hot|warm|raining|snowing) (?:out|outside))\b/.test(t) &&
+      !/\b(?:usually|in general|history|historical|climate|last (?:week|year|month))\b/.test(t)) {
+    const day = (t.match(/\b(today|tonight|tomorrow|monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b/) || [, "today"])[1];
+    let place = (t.match(/\b(?:in|for|at) ([a-z][a-z .,'-]{1,40}?)(?: (?:today|tonight|tomorrow|this week|on \w+day|this (?:morning|afternoon|evening)|like))?$/) || [])[1] || "";
+    if (/^(?:the (?:morning|afternoon|evening|week|weekend)|today|tonight|tomorrow|here|home|\w+day)$/.test(place.trim())) place = "";
+    const it = { place, day };
+    busy = true; setMood("thinking");
+    weatherSkill(it).then(r => { skillLog("weather", it, r); return r.plain; })
+      .catch(() => `The weather service isn't answering just now, ${addr()}.`)
+      .then(line => { busy = false; skillAnswer(text, line); });
+    return true;
+  }
+  const say = (name, it, r) => { if (!r.ok) return false; skillLog(name, it, r); skillAnswer(text, r.plain); return true; };
+  if ((m = t.match(/^how (?:many|much) (?:days|weeks|sleeps|time)(?: is it| are there| is there| left)? (?:until|till|til|to|before) (.+)$/)) ||
+      (m = t.match(/^how (?:long|far away|far off) is it? (?:until|till|to) (.+)$/))) {
+    const d = whenDate(m[1]);
+    if (d) return say("date_math", { op: "days_until", date: isoDay(d) }, dateSkill({ op: "days_until", date: isoDay(d) }));
+  }
+  if ((m = t.match(/^what day (?:of the week )?(?:is|was|will be|does|did) (.+?)(?: fall on| fall| land on| be| on)?$/))) {
+    const d = whenDate(m[1]);
+    if (d) return say("date_math", { op: "day_of_week", date: isoDay(d) }, dateSkill({ op: "day_of_week", date: isoDay(d) }));
+  }
+  const tt = digitsFromWords(t).trim();                                // "five km" → "5 km" (brackets and commas kept for sums)
+  if ((m = tt.match(/^(?:convert |what(?:'s| is) |how (?:much|many|far|long|heavy) is )?(-?\d[\d,]*(?:\.\d+)?) ?([a-z°'" ./-]+?) (?:to|in|into|in to|as) ([a-z°'" ./-]+?)$/))) {
+    const it = { value: m[1], from: m[2], to: m[3] };
+    if (unitFind(m[2]) && unitFind(m[3])) return say("convert", it, convertSkill(it));
+  }
+  if ((m = tt.match(/^how many ([a-z°'" ./-]+?) (?:are )?(?:there )?in (?:a |an |one |(\d[\d,]*(?:\.\d+)?) )?([a-z°'" ./-]+?)$/))) {
+    const it = { value: m[2] || 1, from: m[3], to: m[1] };
+    if (unitFind(m[1]) && unitFind(m[3])) return say("convert", it, convertSkill(it));
+  }
+  if ((m = tt.match(/^(?:what(?:'s| is| are| does)|calculate|compute|work out|how much is|tell me) (.+?)(?: (?:equal|make|come to))?$/))) {
+    const e = mathWords(m[1].replace(/^(?:the answer to |the sum of )/, ""));
+    if (/\d/.test(e) && /[-+*/^%!]|sqrt|\d\s*\(/.test(e) && !/[a-z]{4,}/.test(e.replace(/\b(?:sqrt|of|round|floor|ceil|abs)\b/g, "")))
+      return say("calculate", { expression: e }, calcSkill({ expression: e }));
+  }
+  return false;
+}
+
+/* =========================================================
+   18. MORNING BRIEFING (v6.8): the first time he sees, hears or is touched by the human after
+   "Earliest briefing" (brain.briefFrom, default 6:00 AM) each day, outside quiet hours: a greeting,
+   today's weather, alarms, reminders and dated plans due today, one follow-up from his recent
+   journal, and a rating out of ten for the day ahead. Under 30 seconds. "Brief me" any time.
+   Written by the AI when there's a key and budget, else stock lines. Each one is added to the
+   day's journal entry as a "Morning briefing, 7:12 AM: …" paragraph.
+   ========================================================= */
+const BRIEF_RE = /\b(?:brief me|(?:morning|daily|my|the|a|today'?s) briefing|give me (?:the|my|a|today'?s) (?:rundown|run-down|run down))\b/i;
+let pendingBrief = null, briefBusy = false, briefHintDay = "";
+const briefFromText = () => validTime(brain.briefFrom) ? brain.briefFrom : DEFAULTS.briefFrom;
+function briefDue(d = new Date()) {
+  if (brain.briefing === false || proToday().briefDay === todayKey()) return false;
+  const [h, m] = briefFromText().split(":").map(Number);
+  return d.getHours() * 60 + d.getMinutes() >= h * 60 + m && !inQuietHours(d);
+}
+function briefBlocked() {
+  const now = Date.now();
+  return document.hidden || sleepState !== "awake" || waking || ringing.length > 0 || listening || convo || busy || capturing || camOpening ||
+    previewOpen() || dashIsOpen() || panel.classList.contains("open") || typingOpen() || isSpeaking() || remarkBusy || dreaming || briefBusy ||
+    now - lastSaidAt < 4000 || now - lastHeardAt < 15000;
+}
+// Every 3 s: a waiting briefing goes out as soon as nothing else is happening.
+function briefTick() {
+  if (!pendingBrief) return;
+  if (!briefDue()) { pendingBrief = null; return; }                    // given, switched off, or quiet hours began
+  if (briefBlocked()) return;
+  if (!speechUnlocked) {                                               // speech needs one tap after each launch: the tap brings it
+    if (briefHintDay !== todayKey()) {
+      briefHintDay = todayKey();
+      show(esc(`${hello()}, ${addr()}. Tap me for your morning briefing.`));
+      logEvent("remark", "Morning briefing waiting for a tap (speech needs one after each launch)");
+    }
+    return;
+  }
+  giveBriefing("morning");
+}
+setInterval(briefTick, 3000);
+const hello = () => { const h = new Date().getHours(); return h < 12 ? "Good morning" : h < 18 ? "Good afternoon" : "Good evening"; };
+// Recent journal entries before today, without earlier briefings: what the follow-up can draw on.
+function recentJournal(n = 2) {
+  const today = isoDay(), oldest = isoDay(new Date(Date.now() - 5 * DAY_MS));
+  return journal.filter(j => j.date < today && j.date >= oldest).map(j => ({ date: j.date, rating: j.rating,
+    text: j.text.split(/\n\s*\n/).filter(p => !/^(?:morning )?briefing, /i.test(p.trim())).join(" ").trim().slice(0, 700) }))
+    .filter(j => j.text).slice(0, n);
+}
+const itemSpoken = i => i.kind === "alarm" ? `an alarm at ${clockWords(new Date(i.due))}` : `a reminder ${i.phrase || "to " + i.label} at ${clockWords(new Date(i.due))}`;
+async function briefFacts() {
+  const now = new Date(), end = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1).getTime();
+  let wx = null, wxNote = "";
+  if (brain.homeCity) {
+    try { const g = await homeGeo(); if (g) wx = weatherReport(g, await forecast(g), 0); else wxNote = "the home town wasn't found"; }
+    catch (e) { wxNote = "the weather service couldn't be reached"; }
+  }
+  const items = tItems.filter(i => i.state === "pending" && i.kind !== "timer" && i.due < end).sort((a, b) => a.due - b.due);
+  const facts = brain.memory.filter(e => memDueIn(e) === 0).slice(0, 3);
+  return { wx, wxNote, items, facts, jr: recentJournal() };
+}
+// One paragraph from the AI, from these facts only. Null if it fails; cost reported either way.
+async function aiBriefing(f, how) {
+  const ctrl = new AbortController(), timer = setTimeout(() => ctrl.abort(), 15000);
+  const due = [...f.items.map(i => `${KIND_NAME[i.kind]}: ${i.kind === "alarm" ? "" : (i.phrase || "to " + i.label) + " "}at ${clockWords(new Date(i.due))}`),
+               ...f.facts.map(e => `Dated memory: ${e.text}`)];
+  const facts = [
+    f.wx ? `WEATHER:\n${f.wx.text}` : brain.homeCity ? `WEATHER: unavailable (${f.wxNote}); mention that in a few words.` : "WEATHER: no home town is set, so leave the weather out.",
+    `DUE TODAY: ${due.length ? due.join("; ") : "nothing set"}.`,
+    f.jr.length ? `YOUR RECENT JOURNAL:\n${f.jr.map(j => `${journalLabel(j.date)}: ${j.text}`).join("\n")}` : "YOUR RECENT JOURNAL: no entries; skip the follow-up, or touch on a plan or promise from your memory instead."
+  ].join("\n\n");
+  try {
+    const res = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+      method: "POST", signal: ctrl.signal,
+      headers: { "Authorization": "Bearer " + brain.apiKey, "Content-Type": "application/json", "X-Title": "Robot Brain" },
+      body: JSON.stringify({
+        model: brain.model || "openrouter/auto", max_tokens: 400, temperature: 0.8, usage: { include: true },
+        messages: [
+          { role: "system", content: systemPrompt(true) + "\n\nEYES: no photo; you cannot see anything right now, so do not describe your human or the room." },
+          ...brain.history.slice(-4),
+          { role: "user", content: `[Not your human speaking: a note from your own systems. ${how === "morning"
+            ? "This is the first time you have seen your human today: give them their morning briefing now."
+            : "Your human asked for a briefing: give it now."}\n\n${facts}\n\nSpeak the briefing as one paragraph of at most 75 words (under 30 seconds aloud), in this order: a greeting that suits the hour; today's weather in one sentence (temperatures in Fahrenheit, said simply as "degrees"); what is due today, or that the day is clear; one brief follow-up on something in your recent journal (a question or a dry remark, never invented); and last, your rating out of ten for the day ahead, written in words. Use only these facts. No lists, no markdown. Reply with the usual JSON: "say" holds the briefing, "remember" empty, "action" and "display" null.]` }
+        ]
+      })
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data?.error?.message || ("HTTP " + res.status));
+    const msg = data.choices?.[0]?.message || {};
+    const raw = Array.isArray(msg.content) ? msg.content.map(x => x?.text || "").join("") : String(msg.content || "");
+    const say = cleanSay(parseReply(raw).say || "").replace(/(?<![\d.\/])(\d+(?:\.\d+)?)\s*\/\s*10\b/g, "$1 out of 10").trim();
+    return { say: say && say.length <= 650 && !/[{}]/.test(say) ? say : null, cost: Number(data.usage?.cost) };
+  } finally { clearTimeout(timer); }
+}
+function stockBriefing(f, how) {
+  const a = addr(), parts = [];
+  parts.push(how === "morning" ? pick([`${hello()}, ${a}. Your briefing.`, `${hello()}, ${a}. The morning report, if I may.`])
+                               : pick([`Your briefing, ${a}.`, `Very good, ${a}. The briefing.`]));
+  if (f.wx) parts.push(f.wx.plain);
+  else if (brain.homeCity) parts.push("The weather service isn't answering, I'm afraid.");
+  if (f.items.length) parts.push(`Today you have ${andList(f.items.slice(0, 4).map(itemSpoken))}.`);
+  f.facts.slice(0, 2).forEach(e => parts.push(`${factForSpeech(e.text)}.`));
+  if (!f.items.length && !f.facts.length) parts.push(pick(["Nothing is set for today.", "The diary is clear today."]));
+  const j = f.jr[0];
+  if (j && j.rating != null) parts.push(`${cap1(journalLabel(j.date, true))}, I gave the day ${Math.round(j.rating) === 8 ? "an" : "a"} ${numWords(j.rating)} out of ten. ` +
+    pick(["Let us see if today can do better.", "A standard to beat.", j.rating >= 8 ? "A hard act to follow." : "Room for improvement."]));
+  let r = winslowScore() + (f.wx && f.wx.bad ? -1 : 0) + (f.wx && f.wx.good ? 1 : 0) - (f.items.length + f.facts.length > 3 ? 1 : 0);
+  r = clamp(r, 3, 9);
+  parts.push(`The day ahead, I rate ${r === 8 ? "an" : "a"} ${NUM_WORDS[r]} out of ten.`);
+  return parts.join(" ");
+}
+// Added to the day's journal entry (the dream adds its own entry for the day after it).
+function journalBrief(text, how) {
+  const date = isoDay(), old = journal.find(j => j.date === date);
+  const para = `${how === "morning" ? "Morning briefing" : "Briefing"}, ${new Date().toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}: ${text}`;
+  journalPut({ date, text: old ? old.text + "\n\n" + para : para, rating: old ? old.rating : null, t: old ? old.t : Date.now() });
+}
+async function giveBriefing(how, onDone) {
+  if (briefBusy) return;
+  briefBusy = true; busy = true; pendingBrief = null;
+  const p = proToday();
+  if (how === "morning") { p.briefDay = todayKey(); p.greetDay = todayKey(); }   // the briefing is the day's greeting
+  dropPendingRemark("first"); dropPendingRemark("return");
+  save();
+  setMood("thinking"); hideDock();
+  if (how !== "morning") show(`<b>${esc(brain.name)}:</b> One moment…`);
+  let text = "", byAi = false, cost = NaN;
+  try {
+    const f = await briefFacts();
+    if (brain.apiKey && paidAllowed()) {
+      try { const r = await aiBriefing(f, how); cost = r.cost; if (r.say) { text = r.say; byAi = true; } else spendAdd(cost); }
+      catch (err) { logEvent("error", "Briefing (AI): " + (err.name === "AbortError" ? "took too long" : err.message) + "; used the stock briefing"); }
+    }
+    if (!text) text = stockBriefing(f, how);
+    f.facts.forEach(e => p.reminded[e.id] = 1);                         // dated memories are covered: no separate reminder later
+    markUsed(f.facts.map(e => e.id));
+  } catch (err) {
+    logEvent("error", "Briefing: " + err.message);
+    text = `${hello()}, ${addr()}. My briefing notes have gone astray, I'm afraid.`;
+  } finally { busy = false; briefBusy = false; }
+  const note = budgetNote();
+  if (note) text += " " + note;
+  if (how === "morning") { if (byAi) { const u = usageToday(); if (Number.isFinite(cost)) u.briefCost = (u.briefCost || 0) + cost; spendAdd(cost); } }
+  else countChat(byAi, byAi ? cost : undefined);
+  brain.history.push({ role: "assistant", content: JSON.stringify({ say: text, emotion: "neutral" }) });
+  brain.history = brain.history.slice(-12);
+  journalBrief(text, how);
+  logEvent("remark", `${how === "morning" ? "Morning briefing" : "Briefing"}${byAi ? " (AI)" : ""}: ${text}`);
+  save();
+  poke(); setMood("happy");
+  speak(text, () => { setTimeout(() => { if (mood === "happy") setMood("neutral"); }, 1200); onDone && onDone(); }, { nolog: true, long: true });
+}
+// "Brief me", "morning briefing"; "turn off the morning briefing". True = handled.
+function briefCommand(text) {
+  const t = skillWords(text);
+  if (!BRIEF_RE.test(t) || t.split(" ").length > 12) return false;
+  const a = addr();
+  const say = line => skillAnswer(text, line);
+  if (/\b(?:turn|switch) off\b|\bstop (?:the |my |doing )?(?:the )?(?:morning )?briefing|\bno more (?:morning )?briefings?\b|\bdisable\b/.test(t)) {
+    brain.briefing = false; save(); say(`Very good, ${a}. No more morning briefings. Say "brief me" whenever you want one.`); return true;
+  }
+  if (/\b(?:turn|switch) on\b|\benable\b|\bstart (?:the |doing )?(?:morning )?briefings?\b/.test(t)) {
+    brain.briefing = true; save(); say(`Very good, ${a}. A briefing each morning, from ${briefFromText()}.`); return true;
+  }
+  brain.history.push({ role: "user", content: text });
+  giveBriefing("asked");
+  return true;
+}
+
+/* =========================================================
+   19. SPENDING GUARD (v6.8): a monthly budget in dollars (brain.budget, default $5; 0 = no limit).
+   brain.spend = { month: "YYYY-MM", cost, unpriced, told80, told100, okDay, blockTold } holds the
+   month to date: every AI cost OpenRouter reports (chats, remarks, dreams, briefings, skill round
+   trips; search is inside the reply's cost). A new month starts it again.
+   At 80%: he says so once, then economises (no web search unless asked for, smaller photos, fewer
+   and only stock remarks). At 100%: brain.overBudget "ask" (before each paid request), "block"
+   (offline brain only) or "allow". Background requests (dreams, AI remarks, AI briefings) never ask:
+   they simply don't run, unless "allow" or "yes, for today".
+   ========================================================= */
+const monthKey = (d = new Date()) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+const money = x => "$" + (Number(x) || 0).toFixed(2);
+const SEARCH_ASK_RE = /\b(?:search|look (?:it |that |this )?up|look up|google|check (?:online|the web|the internet)|on the (?:web|internet)|find out online)\b/i;
+let pendingSpend = null;
+function spendState() {
+  const s = brain.spend;
+  if (!s || typeof s !== "object" || s.month !== monthKey()) {
+    if (s && s.month) logEvent("state", `New month: spending reset (${s.month} came to ${money(s.cost)})`);
+    brain.spend = { month: monthKey(), cost: 0, unpriced: 0 };
+  }
+  return brain.spend;
+}
+function spendAdd(cost) {
+  const s = spendState();
+  if (Number.isFinite(cost) && cost >= 0) s.cost += cost; else s.unpriced = (s.unpriced || 0) + 1;
+}
+const budgetNow = () => { const b = Number(brain.budget); return Number.isFinite(b) && b > 0 ? b : 0; };
+const spendFrac = () => budgetNow() ? spendState().cost / budgetNow() : 0;
+const economy = () => spendFrac() >= 0.8;                                // saving: fewer searches, smaller photos, fewer remarks
+const overBudget = () => spendFrac() >= 1;
+const overMode = () => ["ask", "block", "allow"].includes(brain.overBudget) ? brain.overBudget : "ask";
+// May a paid AI request go ahead without asking?
+function paidAllowed() {
+  return !overBudget() || overMode() === "allow" || (overMode() === "ask" && spendState().okDay === todayKey());
+}
+// Once a month (and again if the budget is raised): his word on the accounts, added to a reply.
+function budgetNote() {
+  const s = spendState(), b = budgetNow(), a = addr();
+  if (!b) return "";
+  if (overBudget() && s.told100 !== b) {
+    s.told100 = s.told80 = b; save(); logEvent("state", `Budget spent: ${money(s.cost)} of ${money(b)}`);
+    return `A word on the accounts, ${a}: this month's ${money(b)} is spent.` +
+      (overMode() === "allow" ? " I shall carry on regardless, as instructed." : overMode() === "block" ? " I shall manage on my own wits until the first." : " I shall ask before spending more.");
+  }
+  if (economy() && s.told80 !== b) {
+    s.told80 = b; save(); logEvent("state", `Budget at ${Math.floor(spendFrac() * 100)}%: economising`);
+    return pick([`A word on the household accounts, ${a}: we've spent ${money(s.cost)} of this month's ${money(b)}. I shall economise: fewer searches, smaller photographs.`,
+                 `If I may, ${a}: eighty percent of this month's budget is gone. I shall be frugal until the first. Searches only when you ask for one.`]);
+  }
+  return "";
+}
+// The budget is spent and he may not just carry on: block (offline brain) or ask first.
+function budgetGate(userText, image, file) {
+  const a = addr(), s = spendState();
+  s.told100 = s.told80 = budgetNow();                    // he's saying so now: no separate note on the accounts later
+  if (overMode() === "block") {
+    logEvent("state", "Budget spent: answered without the AI");
+    if (file || image) { speak(`This month's budget is spent, ${a}, so that will have to wait until the first.`); return; }
+    const first = s.blockTold !== todayKey(); s.blockTold = todayKey(); save();
+    if (!offlineSkill(userText)) replyOffline(userText, first ? `This month's budget is spent, ${a}, so I'm on my own wits until the first.` : "");
+    return;
+  }
+  pendingSpend = { text: userText, image, file, at: Date.now() };
+  logEvent("state", "Budget spent: asked before using the AI");
+  setMood("thinking");
+  speak(`This month's budget is spent, ${a}: ${money(s.cost)} of ${money(budgetNow())}. Shall I use my AI brain for this anyway?`, () => {
+    setMood("neutral");
+    if (!convo) setTimeout(() => { if (pendingSpend && !listening && !busy) startListening(true); }, AFTER_SPEECH_MS + 50);
+  });
+}
+function spendText() {
+  const s = spendState(), b = budgetNow(), mo = new Date().toLocaleDateString("en-US", { month: "long" });
+  return `${money(s.cost)}${b ? ` of ${money(b)} (${Math.floor(spendFrac() * 100)}%)` : ""} in ${mo}` +
+    (s.unpriced ? `; ${s.unpriced} repl${s.unpriced === 1 ? "y" : "ies"} not priced by the model` : "");
+}
+function budgetStateText() {
+  if (!budgetNow()) return "No limit set";
+  const reset = new Date(new Date().getFullYear(), new Date().getMonth() + 1, 1).toLocaleDateString("en-US", { month: "long", day: "numeric" });
+  if (!economy()) return `Normal (economising from ${money(budgetNow() * 0.8)}); resets ${reset}`;
+  if (!overBudget()) return `Economising (over 80%): no web search unless you ask, smaller photos, fewer remarks; resets ${reset}`;
+  const m = overMode();
+  return (m === "allow" ? "Spent: carrying on, as set" : m === "block" ? "Spent: AI off, offline brain only"
+    : spendState().okDay === todayKey() ? "Spent: you said yes for today" : "Spent: I ask before each AI request") + `; resets ${reset}`;
+}
 
 // First launch only: a short hint, then never again.
 if (!brain.hintShown) {
