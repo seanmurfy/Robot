@@ -927,6 +927,10 @@
       <label for="sRate">Speed: <span id="rateVal"></span></label>
       <input id="sRate" type="range" min="0.6" max="1.6" step="0.05">
 
+      <label for="sHandoff">Audio handoff delay: <span id="handoffVal"></span></label>
+      <input id="sHandoff" type="range" min="0" max="500" step="25">
+      <small>Quiet time between the microphone closing and my voice starting. Raise it if my first words crackle; lower it for quicker replies. This phone only.</small>
+
       <div class="row" style="margin-top:10px">
         <button id="btnPreview">▶ Preview voice</button>
         <button id="btnRandomVoice">🎲 Surprise me</button>
@@ -987,7 +991,7 @@
    1. STORAGE: everything the robot knows lives in one object,
       saved in this browser's localStorage (on the phone).
    ========================================================= */
-const APP_VERSION = "v6.9";         // keep version.json in step with this
+const APP_VERSION = "v7.0";         // keep version.json in step with this
 // iPhone bug: after rotating, fixed buttons can be drawn in one place but tappable in another.
 // Snapping the page back to the top re-syncs them.
 function resyncLayout() {
@@ -1020,7 +1024,8 @@ const DEFAULTS = {
   voiceName: "",     // "" = automatic pick (British English first)
   pitch: 0.9,
   rate: 1.0,
-  camera: "user",    // "user" = front, "environment" = back
+  handoffMs: 200,    // "Audio handoff delay": ms of quiet between a microphone closing and his voice (v7.0; device-only, not in backups)
+  camera: "user",   // "user" = front, "environment" = back
   sleepAfter: 2,     // minutes idle before getting sleepy; 0 = never
   followFaces: false,
   faceGate: true,    // "Only listen when I'm in view" (only applies while Follow faces is on)
@@ -1437,10 +1442,49 @@ function esc(s) { return String(s).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<":
 /* =========================================================
    3. VOICE OUT: the browser's built-in text-to-speech
    ========================================================= */
-let audioCtx = null;
+// One AudioContext for the whole visit (v7.0): chirp, chime, the warm-up, the wake-word ear and the mic self-check
+// all share it, and it is resumed rather than replaced. (Separate contexts each claim the phone's audio output.)
+let audioCtx = null, lastAudioAt = 0;     // lastAudioAt: when anything last played (tone, chime, warm-up, his voice)
+function sharedCtx() {
+  try { if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)(); } catch { return null; }
+  if (audioCtx.state === "suspended") audioCtx.resume().catch(() => {});
+  return audioCtx;
+}
+const noteAudio = () => { lastAudioAt = Date.now(); };
+// Warm-up: 150 ms of near-silence (about -80 dB of noise, not digital zeros, which some phones skip) so the
+// phone's speaker path is awake before his voice starts. Used when nothing has played for 30 s.
+const WARM_AFTER_MS = 30000, WARM_MS = 150;
+function audioWarm() {
+  const c = audioCtx; if (!c) return false;
+  try {
+    if (c.state === "suspended") c.resume().catch(() => {});
+    const n = Math.round(c.sampleRate * WARM_MS / 1000), b = c.createBuffer(1, n, c.sampleRate), d = b.getChannelData(0);
+    for (let i = 0; i < n; i++) d[i] = (Math.random() * 2 - 1) * 1e-4;
+    const s = c.createBufferSource(); s.buffer = b; s.connect(c.destination); s.start();
+    noteAudio();
+    return true;
+  } catch { return false; }
+}
+// Every microphone of ours asks for the same processing, stated explicitly (v7.0). Echo cancelling stays OFF: on
+// the Pixel it switches the phone to call-style audio and makes his voice very quiet (v6.6/v6.7).
+const MIC_CONSTRAINTS = { echoCancellation: false, noiseSuppression: true, autoGainControl: true, channelCount: 1 };
+let micAppliedText = "";
+// Logs what the browser actually applied (it may ignore a request); only when it differs from last time.
+function micApplied(stream, who) {
+  try {
+    const t = stream.getAudioTracks()[0]; if (!t || !t.getSettings) return;
+    const g = t.getSettings(), on = v => v === undefined ? "not reported" : v ? "on" : "off";
+    const text = `echo cancelling ${on(g.echoCancellation)}, noise suppression ${on(g.noiseSuppression)}, auto gain ${on(g.autoGainControl)}` +
+      (g.sampleRate ? `, ${g.sampleRate} Hz` : "") + (g.channelCount ? `, ${g.channelCount} ch` : "");
+    if (text === micAppliedText) return;
+    micAppliedText = text;
+    logEvent("audio", `${who}: asked for echo cancelling off, noise suppression on, auto gain on; browser applied ${text}`);
+  } catch {}
+}
 function chirp() {
   // Winslow's signature sound: one soft, low tone, like a discreet "mm."
   if (!audioCtx) return;
+  noteAudio();
   const t = audioCtx.currentTime;
   const o = audioCtx.createOscillator(), g = audioCtx.createGain();
   o.type = "sine";
@@ -1456,10 +1500,7 @@ let speechUnlocked = false;
 function unlockSpeech() {
   // iPhone only allows speech that starts during a tap. Speaking a silent
   // utterance on the first tap "unlocks" speech for later replies.
-  try {
-    if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-    if (audioCtx.state === "suspended") audioCtx.resume();
-  } catch {}
+  sharedCtx();
   if (speechUnlocked || !("speechSynthesis" in window)) return;
   const u = new SpeechSynthesisUtterance(" ");
   u.volume = 0;
@@ -1549,6 +1590,12 @@ function speak(text, onDone, opts = {}) {
     return;
   }
   if (speechSynthesis.speaking || speechSynthesis.pending) speechSynthesis.cancel();
+  // A line still waiting out its handoff never reached the voice, so cancel() can't end it: end it here.
+  if (speakFinish && speakFinish.waiting) { const f = speakFinish; setTimeout(f, 0); }
+  // Audio handoff (v7.0): on the Pixel his first words were sometimes staticky when a microphone had only just
+  // been open. Shut both ears, give the phone `handoffMs` of quiet since the last one closed, and wake the speaker
+  // path with a moment of near-silence if nothing has played for 30 s. Then speak.
+  const ho = audioHandoff();
   const u = new SpeechSynthesisUtterance(text);
   u.rate  = opts.rate  ?? brain.rate  ?? 1.0;
   u.pitch = opts.pitch ?? brain.pitch ?? 0.9;
@@ -1556,28 +1603,74 @@ function speak(text, onDone, opts = {}) {
   const v = chooseVoice(opts.voiceName ?? brain.voiceName);
   if (v) { u.voice = v; u.lang = v.lang; } else u.lang = "en-GB";
   sayStart(text, u.rate);
-  u.onstart = () => { mouthOn(); if (gen === speakGen && !sayBoundary) sayT0 = Date.now(); };
+  let started = false, startT = 0, fallback = null, startGuard = null;
+  const onStarted = () => {                              // his voice is playing (or ought to be by now)
+    if (started) return; started = true; startT = Date.now();
+    clearTimeout(startGuard);
+    noteAudio();
+    // Interruptions need the wake-word ear while he talks: reopen it only once his voice is already going,
+    // so the opening words are never played over a microphone that is just switching on.
+    if (gen === speakGen && brain.wakeWord && bargeOn()) {
+      voiceHoldUntil = Date.now() + BARGE_REOPEN_MS;
+      setTimeout(() => { if (gen === speakGen) try { wakeTick(); } catch {} }, BARGE_REOPEN_MS + 20);
+    }
+    if (brain.debug) logEvent("audio", `Voice: ${ho.mic}; last sound ${ho.since}; ${ho.warm ? "warm-up played; " : ""}` +
+      `waited ${ho.wait} ms (setting ${handoffMs()} ms); voice started ${startT - t0 - ho.wait} ms after that` +
+      (brain.wakeWord && bargeOn() ? `; ear back ${BARGE_REOPEN_MS} ms into the line` : ""));
+  };
+  u.onstart = () => { mouthOn(); if (gen === speakGen && !sayBoundary) sayT0 = Date.now(); onStarted(); };
   u.onboundary = e => { if (gen === speakGen && e.name !== "sentence") { sayBoundary = true; renderSay(e.charIndex); } };
   // Our own "still talking" estimate: iPhone's speechSynthesis.speaking can get stuck on true.
   const estimate = Math.min(opts.long ? 90000 : 20000, 1500 + text.length * 90 / u.rate);   // long = reading the journal aloud
-  speakingUntil = Date.now() + estimate;
+  const t0 = Date.now();
+  speakingUntil = t0 + ho.wait + estimate;
   let finished = false;
   const finish = () => {
     if (finished) return; finished = true;
     if (speakFinish === finish) speakFinish = null;
-    clearTimeout(fallback);
+    clearTimeout(fallback); clearTimeout(startGuard);
     speechEndedAt = Date.now();                          // the mic stays shut for 300 ms after this
-    if (gen === speakGen) { speakingUntil = 0; sayEnd(); mouthOff(); }   // unless a newer line cut this one off
+    noteAudio();
+    if (gen === speakGen) {                              // unless a newer line cut this one off
+      speakingUntil = 0; sayEnd(); mouthOff();
+      // The ears come back AFTER_SPEECH_MS after his voice stops (the browser's recognition waits the same in startListening).
+      voiceHoldUntil = speechEndedAt + AFTER_SPEECH_MS;
+      setTimeout(() => { try { wakeTick(); } catch {} }, AFTER_SPEECH_MS + 20);
+    }
     onDone && onDone();
     continueConvo();                                     // conversation mode: listen again
   };
-  // iPhone sometimes never reports the end of speech: don't let that stall everything.
-  const fallback = setTimeout(finish, estimate * 1.5 + 1000);
+  finish.waiting = true;                                 // still in the handoff, not yet handed to the voice
   u.onend = u.onerror = finish;
   speakFinish = finish;
-  speechSynthesis.speak(u);
-  try { wakeTick(); } catch {}                           // have the wake-word ear open while he talks, for interruptions (section 16)
+  setTimeout(() => {
+    if (finished || gen !== speakGen) return;
+    finish.waiting = false;
+    // iPhone sometimes never reports the end of speech: don't let that stall everything.
+    fallback = setTimeout(finish, estimate * 1.5 + 1000);
+    startGuard = setTimeout(onStarted, 1500);           // some browsers never send onstart
+    speechSynthesis.speak(u);
+  }, ho.wait);
 }
+// Before each line: close the browser's recognition and the wake-word microphone, and work out how long to wait.
+const HANDOFF_DEFAULT = 200, BARGE_REOPEN_MS = 400;
+const handoffMs = () => { const n = Number(brain.handoffMs); return Number.isFinite(n) ? Math.max(0, Math.min(500, Math.round(n))) : HANDOFF_DEFAULT; };
+let micClosedAt = 0, voiceHoldUntil = 0;   // voiceHoldUntil: the wake-word ear stays shut until then (see wakeWanted)
+function audioHandoff() {
+  const now = Date.now(), wasRec = !!(rec || listening), wasWake = !!(wakeStream || wakeOpening);
+  voiceHoldUntil = now + 120000;                         // held until his voice starts (barge-in) or ends; see speak()
+  if (wasRec) dropListening();
+  if (wasWake) wakeRelease();
+  const delay = handoffMs();
+  const mic = wasRec ? "browser recognition was open" : wasWake ? "wake-word mic was open"
+    : micClosedAt ? `mic closed ${fmtAgo(now - micClosedAt)} ago` : "no mic open this visit";
+  let wait = (wasRec || wasWake) ? delay : Math.max(0, micClosedAt + delay - now);
+  const quietFor = lastAudioAt ? now - lastAudioAt : Infinity;
+  const warm = quietFor > WARM_AFTER_MS && audioWarm();
+  if (warm) wait = Math.max(wait, WARM_MS);
+  return { mic, wait, warm, since: lastAudioAt ? fmtAgo(quietFor) + " ago" : "none this visit" };
+}
+const fmtAgo = ms => ms < 1000 ? `${Math.round(ms)} ms` : ms < 120000 ? `${(ms / 1000).toFixed(1)} s` : `${Math.round(ms / 60000)} min`;
 // Interruptions ("barge-in"): stop him mid-sentence. Returns false if he wasn't speaking aloud.
 // Leaves a note of where he was cut off (cutNote) for the next message to the AI.
 let speakFinish = null, cutAt = 0, cutNote = null;
@@ -1812,7 +1905,8 @@ function openMic(auto) {
   rec.onend = () => {
     clearTimeout(listenCap);
     listening = false; rec = null; micBtn.classList.remove("on"); document.body.classList.remove("listening");
-    if (document.hidden) return;                         // app was closed mid-sentence: don't answer
+    micClosedAt = Date.now();
+    if (document.hidden || me.dropped) return;           // app was closed mid-sentence, or he had to speak: don't answer
     clearTimeout(endTimer);
     // If we stopped it ourselves before the browser marked words "final", use what it heard so far.
     // (Unfinished words carry no confidence: 0 = unknown.)
@@ -1848,6 +1942,17 @@ function openMic(auto) {
   listenCap = setTimeout(() => { if (rec) try { rec.stop(); } catch {} }, 15000);
 }
 let listenCap = null;
+// He has to speak (a timer, say) while the browser's recognition is open: close it without acting on half-heard words.
+// In conversation mode he listens again once the line is done.
+function dropListening() {
+  clearTimeout(listenCap);
+  listenGen++;                                           // cancels a mic start that was waiting for quiet
+  const r = rec;
+  if (r) { r.dropped = true; try { r.abort(); } catch {} }
+  rec = null; listening = false; micClosedAt = Date.now();
+  micBtn.classList.remove("on"); document.body.classList.remove("listening");
+  if (convo) awaitingReply = true;
+}
 // Fully release the mic (and speech/sound) when the app is closed or hidden.
 function releaseMic() {
   clearTimeout(listenCap);
@@ -2909,6 +3014,7 @@ function openSettings() {
   $("sMemory").value = brain.memory.map(e => e.text).join("\n");
   $("sPitch").value = brain.pitch ?? 0.9;
   $("sRate").value = brain.rate ?? 1.0;
+  $("sHandoff").value = handoffMs();
   sliderLabels();
   fillVoices(brain.voiceName || "");
   $("settingsMsg").textContent = "";
@@ -2947,11 +3053,13 @@ if ("speechSynthesis" in window) speechSynthesis.addEventListener("voiceschanged
 function sliderLabels() {
   $("pitchVal").textContent = Number($("sPitch").value).toFixed(2);
   $("rateVal").textContent = Number($("sRate").value).toFixed(2) + "×";
+  $("handoffVal").textContent = Number($("sHandoff").value) + " ms";
   $("senseVal").textContent = LISTEN_LEVELS[LISTEN_ORDER[+$("sSense").value] || "normal"].label;
 }
 $("sSense").addEventListener("input", sliderLabels);
 $("sPitch").addEventListener("input", sliderLabels);
 $("sRate").addEventListener("input", sliderLabels);
+$("sHandoff").addEventListener("input", sliderLabels);
 const PREVIEW_LINES = () => [`${brain.name}, at your service, ${addr()}.`, `Your shoes, ${addr()}? A respectable seven out of ten.`,
                              `Ah. You're back, ${addr()}. I trust the day was tolerable.`];
 $("btnPreview").addEventListener("click", () => {
@@ -2989,6 +3097,7 @@ $("btnSave").addEventListener("click", () => {
   brain.voiceName = $("sVoice").value;
   brain.pitch = Number($("sPitch").value);
   brain.rate = Number($("sRate").value);
+  brain.handoffMs = Math.max(0, Math.min(500, Number($("sHandoff").value) || 0));
   const camChanged = brain.camera !== $("sCamera").value;
   brain.camera = $("sCamera").value;
   brain.sleepAfter = Number($("sSleep").value);
@@ -3558,7 +3667,7 @@ if (window.visualViewport) {
        Memory, Senses, Status. Never shows the API key.
    ========================================================= */
 const DASH_TABS = ["notes", "timers", "logs", "memory", "journal", "files", "people", "senses", "status"];
-const LOG_TYPES = { heard: "Heard", said: "Said", saw: "Saw", memory: "Memory", search: "Search", remark: "Remark", mood: "Mood", timer: "Timers", skill: "Skills", model: "Models", diag: "Checks", ignored: "Ignored", state: "State", error: "Error" };
+const LOG_TYPES = { heard: "Heard", said: "Said", saw: "Saw", memory: "Memory", search: "Search", remark: "Remark", mood: "Mood", timer: "Timers", skill: "Skills", model: "Models", diag: "Checks", audio: "Audio", ignored: "Ignored", state: "State", error: "Error" };
 const dashSay = $("dashSay"), dashBody = $("dashBody"), logList = $("logList"), factList = $("factList");
 const senseVideo = $("senseVideo"), senseCamMsg = $("senseCamMsg"), dashMic = $("dashMic");
 let logFilter = "all", dashTicker = null, sensesOpening = false;
@@ -5040,6 +5149,7 @@ function timerCommand(text) {
 function chime() {
   if (!audioCtx) return false;
   try { if (audioCtx.state === "suspended") audioCtx.resume(); } catch {}
+  noteAudio();
   const t0 = audioCtx.currentTime + 0.03;
   [[523.25, 0], [659.25, 0.28], [783.99, 0.56]].forEach(([f, dt]) => {
     [[1, 0.09], [2, 0.018]].forEach(([mult, peak]) => {           // the note and a faint overtone
@@ -6279,12 +6389,12 @@ const WAKE_COMMON = ("the of and to in is you that it was for on are as with his
 const BARGE_STABLE = { strict: 5, normal: 3, relaxed: 2 };   // the word must hold for this many updates running (about 85 ms each)
 let bargeMode = false, bargeKey = "", bargeCount = 0, bargeLen = 0, bargeSkip = -1, wakeFlushUntil = 0;
 let wakeModel = null, wakeModelLoading = null, wakeRecog = null, wakeRecogKey = "";
-let wakeStream = null, wakeCtx = null, wakeSrc = null, wakeNode = null, wakeMute = null, wakePrev = null;
+let wakeStream = null, wakeSrc = null, wakeNode = null, wakeMute = null, wakePrev = null;
 let wakeOpening = false, wakeGen = 0, wakeLastAt = 0, wakeLoudAt = 0, wakeHoldUntil = 0, wakeRetryAt = 0, wakeFails = 0, wakeAnnounce = false;
 
 const wakeName = () => plainWords(brain.name).replace(/'/g, "") || "winslow";
 function wakeWanted() {
-  return !!brain.wakeWord && !document.hidden && !listening && !rec && Date.now() >= wakeHoldUntil;
+  return !!brain.wakeWord && !document.hidden && !listening && !rec && Date.now() >= wakeHoldUntil && Date.now() >= voiceHoldUntil;
 }
 function loadVoskLib() {
   return new Promise((res, rej) => {
@@ -6341,13 +6451,13 @@ async function wakeOpen() {
     if (gen !== wakeGen || !wakeWanted()) return;
     // No echo cancelling, ever: on the Pixel it put the phone's sound in "call" mode and made his voice very quiet
     // (v6.6). The cost is that his own voice is in what the microphone hears while he talks.
-    const stream = await navigator.mediaDevices.getUserMedia({
-      audio: { echoCancellation: false, noiseSuppression: true, autoGainControl: true, channelCount: 1 }, video: false
-    });
-    if (gen !== wakeGen || !wakeWanted()) { stream.getTracks().forEach(t => t.stop()); return; }
-    if (!wakeCtx) wakeCtx = new (window.AudioContext || window.webkitAudioContext)();
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: MIC_CONSTRAINTS, video: false });
+    micApplied(stream, "Wake-word mic");
+    if (gen !== wakeGen || !wakeWanted()) { stream.getTracks().forEach(t => t.stop()); micClosedAt = Date.now(); return; }
+    const wakeCtx = sharedCtx();                          // the one AudioContext of the visit (section 3)
+    if (!wakeCtx) { const e = new Error("no audio context"); e.name = "NoMicAPI"; throw e; }
     if (wakeCtx.state !== "running") await wakeCtx.resume().catch(() => {});
-    if (gen !== wakeGen || !wakeWanted()) { stream.getTracks().forEach(t => t.stop()); return; }
+    if (gen !== wakeGen || !wakeWanted()) { stream.getTracks().forEach(t => t.stop()); micClosedAt = Date.now(); return; }
     wakeRecognizer(wakeCtx.sampleRate);
     wakeStream = stream;
     wakeSrc = wakeCtx.createMediaStreamSource(stream);
@@ -6367,9 +6477,9 @@ function wakeRelease() {
   if (wakeSrc) try { wakeSrc.disconnect(); } catch {}
   if (wakeMute) try { wakeMute.disconnect(); } catch {}
   wakeNode = wakeSrc = wakeMute = wakePrev = null;
-  if (wakeStream) wakeStream.getTracks().forEach(t => t.stop());
+  if (wakeStream) { wakeStream.getTracks().forEach(t => t.stop()); micClosedAt = Date.now(); }
   wakeStream = null; wakeLoudAt = 0;
-  if (wakeCtx && wakeCtx.state === "running") wakeCtx.suspend().catch(() => {});
+  // The shared AudioContext keeps running (his tones use it); releaseMic() suspends it when the page is hidden.
 }
 function wakeFailed(err) {
   wakeRelease();
@@ -6547,7 +6657,7 @@ function wakeHeard() {
 // Once a second: hold the microphone when the wake word should be listening, let it go when it shouldn't.
 function wakeTick() {
   if (!wakeWanted()) { if (wakeStream) wakeRelease(); return; }
-  if (wakeStream) { if (wakeCtx && wakeCtx.state === "suspended") wakeCtx.resume().catch(() => {}); return; }
+  if (wakeStream) { if (audioCtx && audioCtx.state === "suspended") audioCtx.resume().catch(() => {}); return; }
   if (!wakeOpening && Date.now() >= wakeRetryAt) wakeOpen();
 }
 function wakeStatusText() {
@@ -7553,17 +7663,17 @@ async function diagMic(set) {
   let perm = ""; try { perm = (await navigator.permissions.query({ name: "microphone" })).state; } catch {}
   if (perm === "denied") return set("fail", "Microphone permission is blocked.", "Chrome: tap the icon left of the address → Permissions → Microphone → Allow.");
   let stream;
-  try { stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: false } }); }
+  try { stream = await navigator.mediaDevices.getUserMedia({ audio: MIC_CONSTRAINTS }); micApplied(stream, "Self-check mic"); }
   catch (e) {
     return e.name === "NotAllowedError" ? set("fail", "Microphone permission was refused.", "Allow the microphone for this site in Chrome's site settings.")
       : set("fail", `Couldn't open the microphone (${e.name}).`, "Close any other app using the microphone, then try again.");
   }
-  let ctx = null;
+  let src = null;
   try {
-    ctx = new (window.AudioContext || window.webkitAudioContext)();
-    if (ctx.state === "suspended") await ctx.resume().catch(() => {});
-    if (ctx.state !== "running") return set("warn", "Permission granted, but I couldn't measure the sound level.", "Tap the screen once, then run the check again.");
-    const an = ctx.createAnalyser(); an.fftSize = 2048; ctx.createMediaStreamSource(stream).connect(an);
+    const ctx = sharedCtx();                              // the visit's one AudioContext, not a new one (v7.0)
+    if (ctx && ctx.state === "suspended") await ctx.resume().catch(() => {});
+    if (!ctx || ctx.state !== "running") return set("warn", "Permission granted, but I couldn't measure the sound level.", "Tap the screen once, then run the check again.");
+    const an = ctx.createAnalyser(); an.fftSize = 2048; src = ctx.createMediaStreamSource(stream); src.connect(an);
     const buf = new Float32Array(an.fftSize); let peak = 0;
     for (const end = Date.now() + 2000; Date.now() < end;) {
       an.getFloatTimeDomainData(buf);
@@ -7575,8 +7685,8 @@ async function diagMic(set) {
     if (peak > 0.0003) set("pass", `Permission granted; sound heard for 2 seconds (peak ${db} dB).`);
     else set("warn", "Permission granted, but 2 seconds of complete silence.", "Check the microphone isn't muted or covered.");
   } finally {
-    stream.getTracks().forEach(t => t.stop());
-    if (ctx) ctx.close().catch(() => {});
+    if (src) try { src.disconnect(); } catch {}
+    stream.getTracks().forEach(t => t.stop()); micClosedAt = Date.now();
   }
 }
 async function diagWake(set) {
